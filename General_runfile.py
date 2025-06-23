@@ -273,13 +273,13 @@ cavity_parameters = {
         # 5.128217e9 : ground state freq
         "mode_frequency": 5.128217e9, # omega_d
         "cavity_drive_length": 40e-9,
-        "cavity_drive_amp": 0.066,#0.03, (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_cavity_drive_amp": 0.033, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
+        "cavity_drive_amp": 0.0166*2*2,#0.03, (this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_cavity_drive_amp": 0.0166*2, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
         "reset_delay_length": 640e-6,
 
         "cond_disp_pulse_length": 200e-9, #200e-9,
-        "cond_disp_pulse_amp": 1j*0.1147/2, #1j*0.1147/3, #0.5, (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_CNOD_amp": 0.1147, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+        "cond_disp_pulse_amp": 0.8, #1j*0.1193/2, #1j*0.1147/3, (this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_CNOD_amp": 0.1151, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
 
         # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
         "cavity_mode_chi": -0.947e6, #-0.824e6,
@@ -300,7 +300,7 @@ my_run = ZI_QCCS(physical_ports, qubits_parameters, cavity_parameters,
                  which_data= "I", 
                  cr_drive_lines=False, 
                  multiplex_drive_lines = False, 
-                 use_emulation= False)
+                 use_emulation = False)
 
 # %% propagation delay calibration for readout and drive line
 
@@ -395,12 +395,12 @@ my_run.plot_cavity_pi_nopi()
 
 # In[]
 
-my_run.CNOD_calibration(average_exponent=10, amp_range=0.5, npts=101, qubit_phase = 0, is_displaced_state= True, is_plot_simulation=False)
-my_run.plot_CNOD_calibration(scaling_factor=0.1147)
+my_run.CNOD_calibration(average_exponent=11, amp_range=0.5j, npts=201, qubit_phase = 0, is_displaced_state= True, is_plot_simulation=False)
+my_run.plot_CNOD_calibration(scaling_factor=0.1151)
 
 # In[]
 
-my_run.Char_func_displaced(average_exponent=10, npts=41, qubit_phase =0, is_plot_simulation=False)
+my_run.Char_func_displaced(average_exponent=3, npts=21, qubit_phase =0, is_plot_simulation=False)
 my_run.plot_Char_func_displaced()
 
 # In[]
@@ -410,8 +410,8 @@ my_run.plot_disp_pulse_calibration_geophase()
 
 # In[]
 
-my_run.disp_pulse_calibration_parity(average_exponent=10, amp_start = -1, amp_stop=1, amp_npts = 81, is_plot_simulation=False)
-my_run.plot_disp_pulse_calibration_parity(is_fit=True, scaling_factor=0.033) # scaling factor -> alpha_1_cavity_drive_amp 
+my_run.disp_pulse_calibration_parity(average_exponent=11, amp_start = -1, amp_stop=1, amp_npts = 101, is_plot_simulation=False)
+my_run.plot_disp_pulse_calibration_parity(is_fit=True, scaling_factor=0.0166*2) # scaling factor -> alpha_1_cavity_drive_amp 
                                                                         # sigma should be 0.5 by adjusting scaling factor
 
 # %%
@@ -434,11 +434,13 @@ my_run.plot_qubit_state_revival()
 # In[]
 
 my_run.storage_mode_characterization(average_exponent=10, 
-                                    wait_time = 20e-6,
+                                    wait_time = 4e-6,
                                     wait_npts = 101,
-                                    detuning = 0.1e6,
+                                    detuning = 0.0e6,
+                                    init_state = "e",
                                     is_plot_simulation=False)
-my_run.plot_storage_mode_characterization()
+# init_guess = [amplitude,omega,T1,freq=2*detuning,offset]
+my_run.plot_storage_mode_characterization(is_fit=True,init_guess=[0.1, 2, 25e-6, 0.0e6, 0.0])
 
 
 

@@ -3976,8 +3976,6 @@ class ZI_QCCS(object):
             popt = sfit1._curve_fit()[0]
             pcov = sfit1._curve_fit()[1]
 
-            print(pcov)
-
             ax[1].plot(amp*disp_amp_sweep_list/scaling_factor, 
                     sfit1.func(amp*disp_amp_sweep_list/scaling_factor, *popt), label='fit', color='g')
         
@@ -4288,6 +4286,7 @@ class ZI_QCCS(object):
                                     wait_time = 50e-6,
                                     wait_npts = 101,
                                     detuning = 0*1e6,
+                                    init_state = "g",
                                     is_plot_simulation=False):
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
@@ -4342,9 +4341,11 @@ class ZI_QCCS(object):
         ):
             with exp_storage_mode_characterization.sweep(uid="correction", parameter=sweep_case, reset_oscillator_phase=True):
                 with exp_storage_mode_characterization.sweep(uid="delay_sweep", parameter=delay_sweep, reset_oscillator_phase=True):
-                    with exp_storage_mode_characterization.section(uid="displacement"):
+                    with exp_storage_mode_characterization.section(uid="displacement", alignment=SectionAlignment.RIGHT):
                         exp_storage_mode_characterization.play(signal="cavity_drive", pulse=cavity_drive_pulse)
-                                                        
+                        if init_state == "e":
+                            exp_storage_mode_characterization.play(signal="drive", pulse=pi_pulse)
+                                  
                     with exp_storage_mode_characterization.section(uid="delay_drive", play_after="displacement"):
                         exp_storage_mode_characterization.delay(signal="cavity_drive", time=delay_sweep)
                         exp_storage_mode_characterization.delay(signal="drive", time=delay_sweep)
@@ -4394,8 +4395,9 @@ class ZI_QCCS(object):
         if is_plot_simulation:
             self.simulation_plot(compiled_exp_storage_mode_characterization, start_time=0, length=20e-6)
             show_pulse_sheet("storage_mode_characterization", compiled_exp_storage_mode_characterization)
-        
-    def plot_storage_mode_characterization(self, is_fitting=True):
+
+# init_guess = [amplitude,omega,T1,detuning,offset]
+    def plot_storage_mode_characterization(self, is_fit=True, init_guess=None):
         self.storage_mode_characterization_data = self.storage_mode_characterization_results.get_data("storage_mode_characterization")
 
         if self.which_data == "I":
@@ -4425,6 +4427,25 @@ class ZI_QCCS(object):
                         xy=(np.average(delay_sweep_list), np.average(data[0]-data[1])),
                         size=12)
         an.draggable()
+
+        if is_fit :
+
+            sfit1 = sFit('Storage_Characterization', delay_sweep_list, data[0]-data[1], init_guess=init_guess)
+            # Scale the amplitude into alpha (photon number) by using alpha_1_CNOD_amp
+            
+            popt = sfit1._curve_fit()[0]
+            pcov = sfit1._curve_fit()[1]
+
+            print("popt:", popt)
+
+            ax[1].plot(delay_sweep_list, 
+                    sfit1.func(delay_sweep_list, *popt), label='fit', color='g')
+
+            an = ax[1].annotate(f'freq = {popt[3]:.4f}±{np.sqrt(np.diag(pcov))[3]:.4f}'+'\n'
+                                + f'omega = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
+                                + f'T1 = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f}',
+                            xy=(np.average(delay_sweep_list), np.average(data[0]-data[1])*0.95))
+            an.draggable()
 
         ax[0].set_xlabel('Wait time (s)')
         ax[0].set_ylabel(f'[{self.which_data}] (a.u.)')

@@ -20,7 +20,7 @@ from scipy.interpolate import interp1d
 
 class sFit():
     
-    def __init__(self, fit_type, xdata, ydata):
+    def __init__(self, fit_type, xdata, ydata, init_guess=None):
         
         self.fit_type = fit_type
         self.xdata = xdata
@@ -28,14 +28,17 @@ class sFit():
         self.t0 = xdata[0]
         self.delta_t = np.diff(xdata)[0]
         
-        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and (self.fit_type != 'ExpCos') and (self.fit_type != 'Gaussian') and (self.fit_type != 'GaussianCos'):
+        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and (self.fit_type != 'ExpCos') and (self.fit_type != 'Gaussian') and (self.fit_type != 'GaussianCos') and (self.fit_type != 'Storage_Characterization'):
             raise Exception("No such a type!")
         
         func = self.fit_function()
         self.func = func
-        self.initial_guess = self.smart_guess()
-        
-        
+
+        if init_guess is None:
+            self.initial_guess = self.smart_guess()
+        else:
+            self.initial_guess = init_guess
+
         # return curve_fit(func, self.xdata, self.ydata)
     
     def fit_function(self):
@@ -50,6 +53,8 @@ class sFit():
             return self.Gaussian
         elif self.fit_type == 'GaussianCos':
             return self.GaussianCos
+        elif self.fit_type == 'Storage_Characterization':
+            return self.Storage_Characterization
         
     def _curve_fit(self):
         return curve_fit(self.func, self.xdata, self.ydata, p0 = self.initial_guess, maxfev=10000)
@@ -199,3 +204,5 @@ class sFit():
         return (A * exp(-((t-t0)**2)/(2*sigma**2)) + offset).astype(np.float64)
     def GaussianCos(self, t, A, f, sigma, delta, offset, t0): # 5 args
         return (A * exp(-((t-t0)**2)/(2*sigma**2)) * cos((t-t0)*2*pi*f + delta) + offset).astype(np.float64)
+    def Storage_Characterization(self, t, A, omega, T1, delta_f, offset): # 5 args
+        return (A * cos(omega*exp(-t/(2*T1)*cos(2*pi*delta_f*t)) + offset)).astype(np.float64)
