@@ -105,7 +105,8 @@ class ZI_QCCS(object):
 
         physical_ports = self.physical_ports
         qubits_parameters = self.qubits_parameters
-        cavity_parameters = self.cavity_parameters
+        if self.is_memory_mode:
+            cavity_parameters = self.cavity_parameters
         device_setup = self.device_setup
 
         def new_oscillator(port, type, modulation_type = None, sg = None):
@@ -182,7 +183,7 @@ class ZI_QCCS(object):
             for component in qubits_parameters:
             ## only 1 port for measure and acquire line 
                 if port == "measure":
-                    calibration[device_setup.logical_signal_groups[component].logical_signals["measure_line"]] = SignalCalibration(
+                    calibration[device_setup.logical_signal_groups[component].logical_signals["measure"]] = SignalCalibration(
                             oscillator = new_oscillator(port, "if", modulation_type=ModulationType.SOFTWARE, sg = component),
                             local_oscillator = new_oscillator(port, "lo", modulation_type=ModulationType.AUTO),
                             range = physical_ports[port]["range"],
@@ -195,7 +196,7 @@ class ZI_QCCS(object):
                             automute = physical_ports[port]["automute"],
                         )
                 elif port == "acquire":
-                    calibration[device_setup.logical_signal_groups[component].logical_signals["acquire_line"]] = SignalCalibration(
+                    calibration[device_setup.logical_signal_groups[component].logical_signals["acquire"]] = SignalCalibration(
                             oscillator = new_oscillator(port, "if", modulation_type=ModulationType.SOFTWARE, sg = component),
                             local_oscillator = new_oscillator(port, "lo", modulation_type=ModulationType.AUTO),
                             range = physical_ports[port]["range"],
@@ -209,7 +210,7 @@ class ZI_QCCS(object):
                         )
                 elif port == "drive":
 
-                    calibration[device_setup.logical_signal_groups[component].logical_signals["drive_line"]] = SignalCalibration(
+                    calibration[device_setup.logical_signal_groups[component].logical_signals["drive"]] = SignalCalibration(
                         oscillator = new_oscillator(port, "if", modulation_type=ModulationType.HARDWARE, sg = component),
                         local_oscillator = new_oscillator(port, "lo", modulation_type=ModulationType.AUTO, sg=component),
                         range = physical_ports[port][component]["range"],
@@ -220,6 +221,7 @@ class ZI_QCCS(object):
                         threshold = physical_ports[port][component]["threshold"],
                         added_outputs = physical_ports[port][component]["added_outputs"],
                         automute = physical_ports[port][component]["automute"],
+                        voltage_offset= physical_ports[port][component]["voltage_offset"],
                     )
 
                     ## Once physical port sets, no more required, it will be overwritten by the next calibration
@@ -299,13 +301,13 @@ class ZI_QCCS(object):
         if is_snippet: # Not completed yet
             # Get physical channel references via the logical signals
             drive_iq_port = self.device_setup.logical_signal_by_uid(
-                component + "/drive_line"
+                component + "/drive"
             ).physical_channel
             measure_iq_port = self.device_setup.logical_signal_by_uid(
-                component + "/measure_line"
+                component + "/measure"
             ).physical_channel
             acquire_port = self.device_setup.logical_signal_by_uid(
-                component + "/acquire_line"
+                component + "/acquire"
             ).physical_channel
 
             # Get waveform snippets from the simulation
@@ -337,9 +339,9 @@ class ZI_QCCS(object):
 
         if which_qubit is None:
             signal_map = {
-                    "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-                    "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
-                    "drive": device_setup.logical_signal_groups[component].logical_signals["drive_line"],
+                    "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+                    "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
+                    "drive": device_setup.logical_signal_groups[component].logical_signals["drive"],
                 }
         elif which_qubit == "control" :
             signal_map = {
@@ -492,8 +494,8 @@ class ZI_QCCS(object):
 
             # experiment signal - logical signal mapping
             signal_map = {
-                "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
+                "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
             }
         
         elif line == "drive":
@@ -526,9 +528,9 @@ class ZI_QCCS(object):
 
             # experiment signal - logical signal mapping
             signal_map = {
-                "drive": device_setup.logical_signal_groups[component].logical_signals["drive_line"],
-                "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
+                "drive": device_setup.logical_signal_groups[component].logical_signals["drive"],
+                "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
             }
 
             ## send readout pulse through drive port to check flight time
@@ -584,8 +586,8 @@ class ZI_QCCS(object):
             # experiment signal - logical signal mapping
             signal_map = {
                 "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
-                "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
+                "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+                "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
             }
 
             ## send readout pulse through drive port to check flight time
@@ -720,11 +722,11 @@ class ZI_QCCS(object):
         
         for i in range(len(hist1)):
             if mean1 > mean2:
-                if hist1[i] <= thresh: fdlty = fdlty - 1/(len(hist1))
-                if hist2[i] >= thresh: fdlty = fdlty - 1/(len(hist2))
+                if hist1[i] <= thresh: fdlty = fdlty - 1/(2*len(hist1))
+                if hist2[i] >= thresh: fdlty = fdlty - 1/(2*len(hist2))
             else:
-                if hist1[i] >= thresh: fdlty = fdlty - 1/(len(hist1))
-                if hist2[i] <= thresh: fdlty = fdlty - 1/(len(hist2))
+                if hist1[i] >= thresh: fdlty = fdlty - 1/(2*len(hist1))
+                if hist2[i] <= thresh: fdlty = fdlty - 1/(2*len(hist2))
 
         return fdlty, thresh
 
@@ -827,11 +829,59 @@ class ZI_QCCS(object):
             exp.play(signal="cavity_drive", pulse=cond_disp_pulse, 
                      amplitude=amp, phase = np.pi, increment_oscillator_phase = 2*np.pi*fix_angle)
 
+    def wigner_function(self, exp, cavity_drive_pulse, pi2_pulse, amplitude_sweep, sweep_case):
+
+        def correction(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(sweep_case, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=sweep_case):
+                        for v in sweep_case.values:
+                            with exp.case(v):
+                                f(v)
+    
+            return decorator
+
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        with exp.section(uid="alpha_sweep", play_after="preparation"):
+            # D^+(alpha)
+            exp.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude_sweep, phase=np.pi)
+
+        with exp.section(uid="qubit_excitation_1", play_after="alpha_sweep"):
+            exp.play(signal="drive", pulse=pi2_pulse)
+            exp.delay(signal="drive", time=np.abs(1/(2*cavity_parameters[cavity_component]["cavity_mode_chi"]))) # delay for cross Kerr effect
+
+        with exp.section(uid="qubit_excitation_2", play_after="qubit_excitation_1"):
+            @correction(sweep_case, exp=exp)
+            def play_correction(v):
+                if v == 0:
+                    exp.play(signal="drive", pulse=pi2_pulse, phase = 0)
+                elif v == 1:
+                    exp.play(signal="drive", pulse=pi2_pulse, phase = np.pi)
+
+    def characteristic_function(self, exp, pi2_pulse, pi_pulse, cond_disp_pulse, amplitude_sweep, qubit_phase=0):
+
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        with exp.section(uid="qubit_excitation_1", play_after="preparation"):
+            exp.play(signal="drive", pulse=pi2_pulse)
+
+        self.CNOD(exp=exp, cond_disp_pulse=cond_disp_pulse, 
+                pi_pulse = pi_pulse, amp = amplitude_sweep, prev_uid="qubit_excitation_1", 
+                uid1 = "char_cond_disp_pulse_1", uid2 = "char_cond_disp_pulse_2", pi_pulse_uid = "char_pi_pulse_1")
+        
+        with exp.section(uid="qubit_excitation_2", play_after="char_cond_disp_pulse_2"):
+            exp.play(signal="drive", pulse=pi2_pulse, phase=qubit_phase)
+
 ################### Time Domain Measurements #################################################################################################
 # In[] Time Domain Measurements
     
-
-
     def nopi_pi(self, average_exponent, phase = 0, is_plot_simulation = False):
 
         device_setup = self.device_setup
@@ -850,9 +900,10 @@ class ZI_QCCS(object):
             length=qubits_parameters[component]["readout_integration_length"],
             amplitude=qubits_parameters[component]["readout_integration_amp"], 
         )
-        drive_pulse = pulse_library.gaussian(uid="drive_pulse", 
+        drive_pulse = pulse_library.drag(uid="drive_pulse", 
                                              length = qubits_parameters[component]['drive_pulse_length'], 
                                              amplitude = qubits_parameters[component]["drive_amp"],
+                                             beta = qubits_parameters[component]["drive_beta"],
                                              )
         
 
@@ -926,9 +977,9 @@ class ZI_QCCS(object):
                 exp_pi.reserve(signal="measure")
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-            "drive": device_setup.logical_signal_groups[component].logical_signals["drive_line"],
-            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
+            "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+            "drive": device_setup.logical_signal_groups[component].logical_signals["drive"],
+            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
         }
 
         exp_pi.set_signal_map(signal_map)
@@ -960,9 +1011,10 @@ class ZI_QCCS(object):
             length=qubits_parameters[component]["readout_integration_length"],
             amplitude=qubits_parameters[component]["readout_integration_amp"], 
         )
-        drive_pulse = pulse_library.gaussian(uid="drive_pulse", 
+        drive_pulse = pulse_library.drag(uid="drive_pulse", 
                                              length = qubits_parameters[component]['drive_pulse_length'], 
                                              amplitude = qubits_parameters[component]["drive_amp"],
+                                             beta = qubits_parameters[component]["drive_beta"],
                                              )
         
         phase = phase * np.pi / 180
@@ -1153,6 +1205,10 @@ class ZI_QCCS(object):
 
         nopi_hist_data = ax[1,1].hist(nopi_data, bins = num_of_bins, color = "b", alpha = 0.5)
         pi_hist_data = ax[1,1].hist(pi_data, bins = num_of_bins, color = "r", alpha = 0.5)
+
+        self.nopi_value = np.mean(nopi_data)
+        self.pi_value = np.mean(pi_data)
+
         ax[1,1].plot([np.mean(nopi_data), np.mean(nopi_data)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '-k')
         ax[1,1].plot([np.mean(pi_data), np.mean(pi_data)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '--k')
 
@@ -1163,7 +1219,7 @@ class ZI_QCCS(object):
 
         fdlty, thresh = self.hist_fidelity(nopi_data, pi_data)
 
-        an2 = ax[1,1].annotate((f'Fidelity = {fdlty:.2f}'), xy = (np.average(nopi_data), max(nopi_hist_data[0])))
+        an2 = ax[1,1].annotate((f'Fidelity = {fdlty:.3f}'), xy = (np.average(nopi_data), max(nopi_hist_data[0])))
         an2.draggable()
 
         plt.show()
@@ -1633,7 +1689,8 @@ class ZI_QCCS(object):
             
 # In[]
 
-    def Ramsey(self, detuning = 0, is_echo = False, average_exponent = 12, duration = 100e-6, npts = 101,
+    def Ramsey(self, detuning = 0, is_echo = False, n_pi_pulse = 1, qubit_phase = 0, # (phase : 0 CP, phase : pi/2 CPMG)
+               average_exponent = 12, duration = 100e-6, npts = 101,
                is_zz_interaction = False,
                control_qubit = None,
                is_plot_simulation = False):
@@ -1672,6 +1729,7 @@ class ZI_QCCS(object):
 
         phase = qubits_parameters[component]["readout_phase"]
 
+
         if is_zz_interaction:
             exp_ramsey = Experiment(
                 uid="Ramsey experiment",
@@ -1691,6 +1749,33 @@ class ZI_QCCS(object):
                     ExperimentSignal("acquire"),
                 ],
             )
+
+        self.is_echo = is_echo
+        self.n_pi_pulse = n_pi_pulse
+        self.qubit_phase = qubit_phase
+        
+        def _CPMG(n_pi_pulse, qubit_phase):
+            """CPMG sequence for Ramsey experiment"""
+            if n_pi_pulse == 1:
+                exp_ramsey.play(signal="drive", pulse=drive_pulse_pi2)
+                exp_ramsey.delay(signal="drive", time=time_sweep/2)
+                exp_ramsey.play(signal="drive", pulse=drive_pulse_pi, phase = qubit_phase)
+                exp_ramsey.delay(signal="drive", time=time_sweep/2)
+                exp_ramsey.play(signal="drive", 
+                                pulse=drive_pulse_pi2,
+                                phase = 2*np.pi*detuning*time_sweep)
+            
+            else :
+                exp_ramsey.play(signal="drive", pulse=drive_pulse_pi2)
+                exp_ramsey.delay(signal="drive", time=time_sweep/(2*n_pi_pulse))
+                for _ in range(n_pi_pulse-1):
+                    exp_ramsey.play(signal="drive", pulse=drive_pulse_pi, phase = qubit_phase)
+                    exp_ramsey.delay(signal="drive", time=time_sweep/(n_pi_pulse))
+                exp_ramsey.play(signal="drive", pulse=drive_pulse_pi, phase = qubit_phase)
+                exp_ramsey.delay(signal="drive", time=time_sweep/(2*n_pi_pulse))
+                exp_ramsey.play(signal="drive", 
+                                pulse=drive_pulse_pi2,
+                                phase = 2*np.pi*detuning*time_sweep)
 
         with exp_ramsey.acquire_loop_rt(
             uid="shots",
@@ -1713,13 +1798,7 @@ class ZI_QCCS(object):
                     uid="qubit_excitation", alignment=SectionAlignment.RIGHT, play_after="ZZ_interaction"
                 ):  
                     if is_echo:
-                        exp_ramsey.play(signal="drive", pulse=drive_pulse_pi2)
-                        exp_ramsey.delay(signal="drive", time=time_sweep/2)
-                        exp_ramsey.play(signal="drive", pulse=drive_pulse_pi)
-                        exp_ramsey.delay(signal="drive", time=time_sweep/2)
-                        exp_ramsey.play(signal="drive", 
-                                        pulse=drive_pulse_pi2,
-                                        phase = 2*np.pi*detuning*time_sweep)
+                        _CPMG(n_pi_pulse= n_pi_pulse, qubit_phase = qubit_phase)
                     else:
                         exp_ramsey.play(signal="drive", pulse=drive_pulse_pi2)
                         exp_ramsey.delay(signal="drive", time=time_sweep)
@@ -1805,7 +1884,13 @@ class ZI_QCCS(object):
                                 size = 16)
             an.draggable()
             ax.tick_params(axis='both', which='major', labelsize=16)
-            ax.set_title("Ramsey measurement", fontsize=20)
+            if self.is_echo:
+                if self.qubit_phase == 0:
+                    ax.set_title(f"Ramsey measurement with CP : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
+                else:
+                    ax.set_title(f"Ramsey measurement with CPMG : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
+            else:
+                ax.set_title("Ramsey measurement", fontsize=20)
             ax.set_xlabel("Time (us)", fontsize=20)
             ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
 
@@ -1899,7 +1984,7 @@ class ZI_QCCS(object):
             
 
 # In[]
-    def Rabi_length(self, average_exponent = 12, duration = 100e-6, npts = 100, is_plot_simulation = False):
+    def Rabi_length(self, average_exponent = 12, duration = 100e-6, npts = 100, is_single_shot = True, is_plot_simulation = False):
         
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters 
@@ -1923,7 +2008,7 @@ class ZI_QCCS(object):
             amplitude=qubits_parameters[component]["readout_integration_amp"], 
         )
         
-        rabi_drive_chunk = pulse_library.gaussian_square(uid="drive_pulse", 
+        rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
                                              length = duration/npts, 
                                              amplitude = qubits_parameters[component]["rabi_drive_amp"])
         
@@ -1957,7 +2042,13 @@ class ZI_QCCS(object):
 
             return decorator
         
-
+        if is_single_shot :
+            averaging_mode = AveragingMode.SINGLE_SHOT
+            self.is_single_shot = True
+        else:
+            averaging_mode = AveragingMode.CYCLIC
+            self.is_single_shot = False
+        
         exp_rabi_length = Experiment(
             uid="Rabi_length",
             signals=[
@@ -1966,15 +2057,15 @@ class ZI_QCCS(object):
                 ExperimentSignal("acquire"),
             ],
         )
-        
+
         with exp_rabi_length.acquire_loop_rt(
             uid="shots",
             count=pow(2, average_exponent),
-            averaging_mode=AveragingMode.SINGLE_SHOT,
+            averaging_mode=averaging_mode,
             acquisition_type=AcquisitionType.INTEGRATION,
         ):
             
-            with exp_rabi_length.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep):
+            with exp_rabi_length.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 with exp_rabi_length.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
                     @repeat(rabi_length_sweep, exp_rabi_length)
                     def play_rabi():
@@ -2007,31 +2098,49 @@ class ZI_QCCS(object):
             self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
             
     def plot_Rabi_length(self, is_fit = True):
-
+        
+        if self.is_single_shot:
         ### data processing ###############################################################
 
-        averaged_nums = len(self.rabi_length_results.acquired_results['rabi_length'].axis[0])
-        # npts = len(self.T1_results.acquired_results['ac_T1'].axis[1])
+            averaged_nums = len(self.rabi_length_results.acquired_results['rabi_length'].axis[0])
+            # npts = len(self.T1_results.acquired_results['ac_T1'].axis[1])
 
-        self.rabi_length_data = self.rabi_length_results.get_data("rabi_length") # (2^N, npts) array
-        # time = self.rabi_length_results.acquired_results['rabi_length'].axis[1]
+            self.rabi_length_data = self.rabi_length_results.get_data("rabi_length") # (2^N, npts) array
+            # time = self.rabi_length_results.acquired_results['rabi_length'].axis[1]
 
-        time = np.linspace(0, self.exp_Rabi_length_dict["duration"], self.exp_Rabi_length_dict["npts"])
+            time = np.linspace(0, self.exp_Rabi_length_dict["duration"], self.exp_Rabi_length_dict["npts"])
 
-        averaged_data = np.mean(self.rabi_length_data, axis = 0)
+            averaged_data = np.mean(self.rabi_length_data, axis = 0)
 
-        if self.which_data == "I":
-            data = np.real(averaged_data)
-            std_data = np.std(data, axis = 0)/np.sqrt(averaged_nums)
-        else:
-            data = np.imag(averaged_data)
-            std_data = np.std(data, axis = 0)/np.sqrt(averaged_nums)
+            if self.which_data == "I":
+                data = np.real(averaged_data)
+                std_data = np.real(np.std(self.rabi_length_data, axis = 0)/np.sqrt(averaged_nums))
+            else:
+                data = np.imag(averaged_data)
+                std_data = np.imag(np.std(self.rabi_length_data, axis = 0)/np.sqrt(averaged_nums))
 
         ### data plot ######################################################################
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
-        ax.errorbar(time*1e6, data, yerr = std_data, fmt = '--or', capsize = 5, markersize = 3, 
-                    ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+            ax.errorbar(time*1e6, data, yerr = std_data, fmt = '--or', capsize = 5, markersize = 3, 
+                        ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+        
+        else:
+        ### data processing ###############################################################
+            self.rabi_length_data = self.rabi_length_results.get_data("rabi_length")
+
+            if self.which_data == "I":
+                data = np.real(self.rabi_length_data)
+            else:
+                data = np.imag(self.rabi_length_data)
+
+            time = np.linspace(0, self.exp_Rabi_length_dict["duration"], self.exp_Rabi_length_dict["npts"])
+
+        ### data plot ######################################################################
+
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+            ax.plot(time*1e6, data, color="r", marker="o", linestyle = '--', markeredgecolor='black')
 
         if is_fit :
             sfit1 = sFit('ExpCos', time, data)
@@ -2874,8 +2983,8 @@ class ZI_QCCS(object):
         plt.tight_layout()
         plt.show()
 
-# %%
-    def cavity_T1(self, average_exponent=12, duration=100e-6, npts=101, is_plot_simulation=False):
+# %% cavity crosskerr effect
+    def cavity_T1(self, average_exponent=12, start = 1e-6, duration=100e-6, npts=101, is_plot_simulation=False):
 
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
@@ -2883,44 +2992,41 @@ class ZI_QCCS(object):
 
         component = list(qubits_parameters.keys())[self.which_qubit]
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
 
         # Define pulses
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse",
-            length=qubits_parameters[component]["readout_pulse_length"],
-            amplitude=qubits_parameters[component]["readout_amp"]
-        )
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
 
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function",
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"]
-        )
-
-        cavity_drive_pulse = pulse_library.gaussian_square(
-            uid="cavity_drive_pulse",
-            length=cavity_parameters[cavity_component]["cavity_drive_length"],
-            amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
-        )
-
-        cond_pi_pulse = pulse_library.gaussian(
-            uid="pi_pulse",
-            length=qubits_parameters[component]["cond_pi_length"],
-            amplitude=qubits_parameters[component]["cond_pi_amp"],
-            beta=qubits_parameters[component]["cond_pi_beta"]
-        )
+        pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        cond_disp_pulse, cavity_drive_pulse = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
 
         phase = qubits_parameters[component]["readout_phase"]
 
         # Sweep parameters
-        delay_sweep = LinearSweepParameter(uid="delay", start=0, stop=duration, count=npts)
+        delay_sweep = LinearSweepParameter(uid="delay", start=start, stop=start+duration, count=npts)
+
+        sweep_case_2 = LinearSweepParameter(uid="crosskerr_check", start=0, stop=1, count=2)
+
+        def on_off_cond_pi_pulse(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(sweep_case, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=sweep_case):
+                        for v in sweep_case.values:
+                            with exp.case(v):
+                                f(v)
+
+            return decorator
 
         # Define the experiment
         exp_cavity_T1 = Experiment(
             uid="cavity_T1",
             signals=[
                 ExperimentSignal("cavity_drive"),
-                # ExperimentSignal("drive"),
+                ExperimentSignal("drive"),
                 ExperimentSignal("measure"),
                 ExperimentSignal("acquire"),
             ],
@@ -2932,13 +3038,19 @@ class ZI_QCCS(object):
             averaging_mode=AveragingMode.SINGLE_SHOT,
             acquisition_type=AcquisitionType.INTEGRATION,
         ):
+            # with exp_cavity_T1.sweep(uid="crosskerr_check", parameter=sweep_case_2):
             with exp_cavity_T1.sweep(uid="sweep", parameter=delay_sweep, alignment=SectionAlignment.RIGHT):
                 with exp_cavity_T1.section(uid="cavity_excitation", alignment=SectionAlignment.RIGHT):
                     exp_cavity_T1.play(signal="cavity_drive", pulse=cavity_drive_pulse)
                     exp_cavity_T1.delay(signal="cavity_drive", time=delay_sweep)
 
-                # with exp_cavity_T1.section(uid="cond_pi_excitation", play_after="cavity_excitation"):
-                #     exp_cavity_T1.play(signal="drive", pulse=cond_pi_pulse)
+                # with exp_cavity_T1.section(uid="cond_pi_pulse", play_after="cavity_excitation"):
+                #     @on_off_cond_pi_pulse(sweep_case_2, exp=exp_cavity_T1)
+                #     def play_crosskerr_check(v):
+                #         if v == 0:
+                #             pass
+                #         elif v == 1:
+                #             exp_cavity_T1.play(signal="drive", pulse=cond_pi_pulse)
 
                 with exp_cavity_T1.section(uid="measure", play_after="cavity_excitation"):
                     exp_cavity_T1.play(signal="measure", pulse=readout_pulse, phase=phase)
@@ -2948,13 +3060,13 @@ class ZI_QCCS(object):
                         kernel=readout_weighting_function,
                     )
                 with exp_cavity_T1.section(uid="relax", 
-                                           length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                                        length=cavity_parameters[cavity_component]["reset_delay_length"]):
                     exp_cavity_T1.reserve(signal="measure")
         
         signal_map = {
-            "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
-            # "drive": device_setup.logical_signal_groups[component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -2976,23 +3088,39 @@ class ZI_QCCS(object):
 
         self.cavity_T1_data = self.cavity_T1_results.get_data("cavity_T1") # (2^N, npts) array
         time = self.cavity_T1_results.acquired_results['cavity_T1'].axis[1]
+        # time = self.cavity_T1_results.acquired_results['cavity_T1'].axis[2]
 
         if self.which_data == "I":
             
+            # data_0 = np.real(np.mean(self.cavity_T1_data, axis = 0)[0]) # v ==0
+            # data_1 = np.real(np.mean(self.cavity_T1_data, axis = 0)[1]) # v ==1
+            # std_data_0 = np.real(np.std(self.cavity_T1_data, axis = 0)[0]/np.sqrt(averaged_nums))
+            # std_data_1 = np.real(np.std(self.cavity_T1_data, axis = 0)[1]/np.sqrt(averaged_nums))
+
             data = np.real(np.mean(self.cavity_T1_data, axis = 0))
             std_data = np.real(np.std(self.cavity_T1_data, axis = 0)/np.sqrt(averaged_nums))
-
+           
         else:
+            # data_0 = np.imag(np.mean(self.cavity_T1_data, axis = 0)[0]) # v ==0
+            # data_1 = np.imag(np.mean(self.cavity_T1_data, axis = 0)[1]) # v ==1
+            # std_data_0 = np.imag(np.std(self.cavity_T1_data, axis = 0)[0]/np.sqrt(averaged_nums))
+            # std_data_1 = np.imag(np.std(self.cavity_T1_data, axis = 0)[1]/np.sqrt(averaged_nums))
+
             data = np.imag(np.mean(self.cavity_T1_data, axis = 0))
             std_data = np.imag(np.std(self.cavity_T1_data, axis = 0)/np.sqrt(averaged_nums))
 
 
         ### data plot ######################################################################
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-        
-        ax.errorbar(time*1e6, data, yerr = std_data, fmt = '--or', capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+        # fig1, ax1 = plt.subplots(1, 2, figsize=(10, 20))
 
+        # ax1[0].errorbar(time*1e6, data_0, yerr = std_data_0, fmt = '--or', capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+        # ax1[1].errorbar(time*1e6, data_1, yerr = std_data_1, fmt = '--ob', capsize = 5, markersize = 3, ecolor = 'k', mfc=(0,0,1,0.5), mec = (0,0,0,1))
+
+        fig2, ax2 = plt.subplots(1, 1, figsize=(10, 10))
+        ax2.errorbar(time*1e6, data, yerr = std_data, fmt = '--ok', capsize = 5, markersize = 3, ecolor = 'k', mfc=(0,0,0,0.5), mec = (0,0,0,1))
+        # ax2.errorbar(time*1e6, data_1-data_0, yerr = std_data_0+std_data_1, fmt = '--ok', capsize = 5, markersize = 3, ecolor = 'k', mfc=(0,0,0,0.5), mec = (0,0,0,1))
+        
         if is_fit :
             sfit1 = sFit('Exp', time, data)
             
@@ -3002,18 +3130,18 @@ class ZI_QCCS(object):
             _,decay_rate,_ = popt
             _,decay_rate_err,_ = np.sqrt(np.diag(pcov))
 
-            ax.plot(time*1e6, sfit1.func(time, *popt))
-            an = ax.annotate((f'T1 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us]'), 
+            ax2.plot(time*1e6, sfit1.func(time, *popt))
+            an = ax2.annotate((f'T1 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us]'), 
                              xy = (np.average(time*1e6), np.average(data[0:10]) ),
                              size = 16)
             an.draggable()
 
-        ax.tick_params(axis='both', which='major', labelsize=20)
-        ax.tick_params(axis='both', which='minor', labelsize=15)
+        ax2.tick_params(axis='both', which='major', labelsize=20)
+        ax2.tick_params(axis='both', which='minor', labelsize=15)
 
-        ax.set_title("cavity T1 measurement", fontsize=20)
-        ax.set_xlabel("Time (us)", fontsize=20)
-        ax.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
+        ax2.set_title("cavity T1 measurement", fontsize=20)
+        ax2.set_xlabel("Time (us)", fontsize=20)
+        ax2.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
 
         plt.show()
 
@@ -3101,8 +3229,8 @@ class ZI_QCCS(object):
         exp_cavity_mode_freq.set_calibration(exp_calibration)
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire_line"],
+            "measure": device_setup.logical_signal_groups[component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[component].logical_signals["acquire"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
         
@@ -3156,6 +3284,7 @@ class ZI_QCCS(object):
                        freq_npts = 0,
                        is_qubit2 = False,
                        qubit2=None,
+                       auto_chunking=True,
                        is_plot_simulation=False):
         
         device_setup = self.device_setup
@@ -3247,7 +3376,7 @@ class ZI_QCCS(object):
         ):
             with exp_cavity_pi_nopi.sweep(uid="crosskerr_check", parameter=sweep_case_2):
                 with exp_cavity_pi_nopi.sweep(uid="on_off_pi", parameter=sweep_case_1):
-                    with exp_cavity_pi_nopi.sweep(uid="sweep_freq", parameter=sweep_freq_cases):
+                    with exp_cavity_pi_nopi.sweep(uid="sweep_freq", parameter=sweep_freq_cases, auto_chunking= auto_chunking):
 
                         with exp_cavity_pi_nopi.section(uid="pi_nopi_cavity"):
 
@@ -3312,17 +3441,17 @@ class ZI_QCCS(object):
 
         if is_qubit2:
             signal_map = {
-                "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-                "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-                "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
-                "drive2": device_setup.logical_signal_groups[qubit2_component].logical_signals["drive_line"],
+                "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+                "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+                "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+                "drive2": device_setup.logical_signal_groups[qubit2_component].logical_signals["drive"],
                 "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
             }
         else:
             signal_map = {
-                "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-                "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-                "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+                "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+                "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+                "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
                 "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
             }
 
@@ -3490,9 +3619,9 @@ class ZI_QCCS(object):
                     exp_CNOD_calibration.reserve(signal="measure")
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -3576,8 +3705,6 @@ class ZI_QCCS(object):
             popt = sfit1._curve_fit()[0]
             pcov = sfit1._curve_fit()[1]
 
-            print(pcov)
-
             ax.plot(amp*amplitude_sweep_list/scaling_factor, 
                     sfit1.func(amp*amplitude_sweep_list/scaling_factor, *popt), label='fit', color='g')
             
@@ -3597,9 +3724,88 @@ class ZI_QCCS(object):
  
         plt.show()
 
+# In[] acquired CNOD_geometric_phase
+
+    # def CNOD_geophase_calibration(self, average_exponent=12, amp_sweep = 1, amp_npts = 11, is_plot_simulation=False):
+        
+    #     device_setup = self.device_setup
+    #     qubits_parameters = self.qubits_parameters
+    #     cavity_parameters = self.cavity_parameters
+    #     qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+    #     cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+    #     # Define pulses
+    #     readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+    #                     qubits_component, cavity_component)
+
+    #     pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+    #                     qubits_component, cavity_component)
+        
+    #     cond_disp_pulse, cavity_drive_pulse = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+    #                                                                qubits_component, cavity_component)
+
+    #     phase = qubits_parameters[qubits_component]["readout_phase"]
+
+    #     # Sweep parameters
+    #     disp_amp_sweep = LinearSweepParameter(uid="disp_amp_sweep", start=-amp_sweep, stop=amp_sweep, count=amp_npts)
+
+    #     # Define the experiment
+    #     exp_disp_calibration = Experiment(
+    #         uid="disp_calibration",
+    #         signals=[
+    #             ExperimentSignal("drive"),
+    #             ExperimentSignal("cavity_drive"),
+    #             ExperimentSignal("measure"),
+    #             ExperimentSignal("acquire"),
+    #         ],
+    #     )
+    #     with exp_disp_calibration.acquire_loop_rt(
+    #         uid="shots",
+    #         count=2**average_exponent,
+    #         averaging_mode=AveragingMode.CYCLIC,
+    #         acquisition_type=AcquisitionType.INTEGRATION,
+    #         reset_oscillator_phase=True
+    #     ):
+    #         with exp_disp_calibration.sweep(uid="disp_amp_sweep", parameter=disp_amp_sweep, reset_oscillator_phase=True):
+    #             with exp_disp_calibration.section(uid="qubit_excitation_1"):
+    #                 exp_disp_calibration.play(signal="drive", pulse=pi2_pulse)
+                
+    #             self.CNOD(exp = exp_disp_calibration, cond_disp_pulse = cond_disp_pulse,
+    #                       pi_pulse = pi_pulse, amp = cavity_parameters[cavity_component]["alpha_1_CNOD_amp"], 
+    #                       prev_uid="qubit_excitation_1", uid1 = "cond_disp_pulse_1", uid2 = "cond_disp_pulse_2", pi_pulse_uid= "pi_pulse_1")
+                
+    #             self.CNOD(exp = exp_disp_calibration, cond_disp_pulse = cond_disp_pulse,
+    #                       pi_pulse = pi_pulse, amp = cavity_parameters[cavity_component]["alpha_1_CNOD_amp"], 
+    #                       prev_uid="cond_disp_pulse_2", uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid= "pi_pulse_2")
+   
+    #             with exp_disp_calibration.section(uid="qubit_excitation_2", play_after="disp_pulse_2"):
+    #                 exp_disp_calibration.play(signal="drive", pulse=pi2_pulse, phase = 0)
+                    
+    #             with exp_disp_calibration.section(uid="measure", play_after="qubit_excitation_2"):
+    #                 exp_disp_calibration.play(signal="measure", pulse=readout_pulse, phase=phase)
+    #                 exp_disp_calibration.acquire(signal="acquire",
+    #                                             handle="disp_calibration",
+    #                                             kernel=readout_weighting_function)
+    #             with exp_disp_calibration.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+    #                 exp_disp_calibration.reserve(signal="measure")
+        
+    #     signal_map = {
+    #         "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+    #         "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+    #         "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+    #         "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+    #     }
+
+    #     exp_disp_calibration.set_signal_map(signal_map)
+    #     compiled_exp_disp_calibration = self.session.compile(exp_disp_calibration)
+    #     self.disp_calibration_results = self.session.run(compiled_exp_disp_calibration)
+    #     if is_plot_simulation:
+    #         self.simulation_plot(compiled_exp_disp_calibration, start_time=0, length=20e-6)
+    #         show_pulse_sheet("disp_calibration", compiled_exp_disp_calibration)
+
 # In[] Char_func_displaced
 
-    def Char_func_displaced(self, average_exponent=12, amp_range=1, npts=11, qubit_phase = 0, is_plot_simulation=False):
+    def Characteristic_function_2D(self, average_exponent=12, amp_range=1, npts=11, qubit_phase = 0, is_plot_simulation=False):
 
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
@@ -3631,8 +3837,8 @@ class ZI_QCCS(object):
         # Sweep parameters
         amplitude_sweep = SweepParameter(uid="amp_sweep", values=amplitude_grid.flatten())
         # Define the experiment
-        exp_Char_func_displaced = Experiment(
-            uid="Char_func_displaced",
+        exp_Characteristic_function_2D = Experiment(
+            uid="Char_func_2D",
             signals=[
                 ExperimentSignal("drive"),
                 ExperimentSignal("cavity_drive"),
@@ -3640,6 +3846,52 @@ class ZI_QCCS(object):
                 ExperimentSignal("acquire"),
             ],
         )
+
+        def displaced_coherent_state():
+
+            with exp_Characteristic_function_2D.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+
+                exp_Characteristic_function_2D.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude)
+        
+        def schrodinger_cat_state():
+            with exp_Characteristic_function_2D.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                with exp_Characteristic_function_2D.section(uid="qubit_preparation"):
+                    exp_Characteristic_function_2D.play(signal="drive", pulse=pi2_pulse)
+                with exp_Characteristic_function_2D.section(uid="CNOD", play_after="qubit_preparation"):
+                    self.CNOD(exp=exp_Characteristic_function_2D, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=1,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None)
+
+        def schrodinger_cat_state_2():
+            with exp_Characteristic_function_2D.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                
+                with exp_Characteristic_function_2D.section(uid="alpha"):
+                    exp_Characteristic_function_2D.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude)
+                with exp_Characteristic_function_2D.section(uid="qubit", play_after="alpha"):
+                    exp_Characteristic_function_2D.play(signal="drive", pulse=pi2_pulse)
+                    exp_Characteristic_function_2D.delay(signal="drive", time=np.abs(1/(2*cavity_parameters[cavity_component]["cavity_mode_chi"])/2)) # delay for cross Kerr effect
+
+        def cat_state():
+            with exp_Characteristic_function_2D.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                with exp_Characteristic_function_2D.section(uid="qubit_preparation"):
+                    exp_Characteristic_function_2D.play(signal="drive", pulse=pi2_pulse)
+                with exp_Characteristic_function_2D.section(uid="CNOD_1", play_after="qubit_preparation"):
+                    self.CNOD(exp=exp_Characteristic_function_2D, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=alpha,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None,
+                            uid1 = "cond_disp_pulse_1", uid2 = "cond_disp_pulse_2", pi_pulse_uid = "pi_pulse_1")
+                with exp_Characteristic_function_2D.section(uid="qubit_1", play_after="CNOD_1"):
+                    exp_Characteristic_function_2D.play(signal="drive", pulse=pi2_pulse)
+                with exp_Characteristic_function_2D.section(uid="CNOD_2", play_after="qubit_1"):
+                    self.CNOD(exp=exp_Characteristic_function_2D, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=1j*beta,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None,
+                            uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid = "pi_pulse_2")
+                with exp_Characteristic_function_2D.section(uid="qubit_2", play_after="CNOD_2"):
+                    exp_Characteristic_function_2D.play(signal="drive", pulse=pi2_pulse, phase=np.pi/2)
+
+
+
 
         with exp_Char_func_displaced.acquire_loop_rt(
             uid="shots",
@@ -3649,7 +3901,7 @@ class ZI_QCCS(object):
             reset_oscillator_phase=True
         ):
             # with exp_CNOD_calibration.sweep(uid="crosskerr_check", parameter=sweep_case):
-            with exp_Char_func_displaced.sweep(uid="sweep", parameter=amplitude_sweep, chunk_count=npts, reset_oscillator_phase=True):
+            with exp_Char_func_displaced.sweep(uid="sweep", parameter=amplitude_sweep, auto_chunking = True, reset_oscillator_phase=True):
                 with exp_Char_func_displaced.section(uid="qubit_excitation_1"):
                     exp_Char_func_displaced.play(signal="drive", pulse=pi2_pulse)
 
@@ -3671,9 +3923,9 @@ class ZI_QCCS(object):
                     exp_Char_func_displaced.reserve(signal="measure")
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -3686,8 +3938,8 @@ class ZI_QCCS(object):
         if is_plot_simulation:
             self.simulation_plot(compiled_exp_Char_func_displaced, start_time=0, length=20e-6)
             show_pulse_sheet("CNOD_calibration", compiled_exp_Char_func_displaced)
-    
-    def plot_Char_func_displaced(self):
+
+    def plot_Characteristic_function_2D(self):
 
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
@@ -3772,14 +4024,14 @@ class ZI_QCCS(object):
                           prev_uid="qubit_excitation_1", uid1 = "cond_disp_pulse_1", uid2 = "cond_disp_pulse_2", pi_pulse_uid= "pi_pulse_1")
 
                 with exp_disp_calibration.section(uid="disp_puls_1", play_after="cond_disp_pulse_2"):
-                    exp_disp_calibration.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude = disp_amp_sweep)
+                    exp_disp_calibration.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude = 1j*disp_amp_sweep)
                 
                 self.CNOD(exp = exp_disp_calibration, cond_disp_pulse = cond_disp_pulse,
                           pi_pulse = pi_pulse, amp = cavity_parameters[cavity_component]["alpha_1_CNOD_amp"], 
                           prev_uid="disp_puls_1", uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid= "pi_pulse_2")
 
                 with exp_disp_calibration.section(uid="disp_pulse_2", play_after="cond_disp_pulse_4"):
-                    exp_disp_calibration.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude = disp_amp_sweep, phase = np.pi)
+                    exp_disp_calibration.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude = 1j*disp_amp_sweep, phase = np.pi)
                 
                 with exp_disp_calibration.section(uid="qubit_excitation_2", play_after="disp_pulse_2"):
                     exp_disp_calibration.play(signal="drive", pulse=pi2_pulse, phase = 0)
@@ -3793,9 +4045,9 @@ class ZI_QCCS(object):
                     exp_disp_calibration.reserve(signal="measure")
         
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -3830,8 +4082,9 @@ class ZI_QCCS(object):
         ############# Plotting the data #####################
 
         fig, ax = plt.subplots(1, 1, figsize=(20, 12))
-        fig.suptitle(f"Displacement pulse calibration", fontsize=18)
-        fig.text(0.5, 0.91, f"length:{length}", ha="center", fontsize=16, color="black")
+        fig.suptitle("Displacement Pulse Calibration", fontsize=18, weight='bold')
+        fig.text(0.5, 0.94, f"Displacement pulse length: {length:.1e}", ha="center", fontsize=14)
+        
         ax.plot(amp*disp_amp_sweep_list, data, marker='o', linestyle=':', color='k')
 
         if is_fit :
@@ -3842,16 +4095,33 @@ class ZI_QCCS(object):
 
             ax.plot(amp*disp_amp_sweep_list, sfit1.func(amp*disp_amp_sweep_list, *popt), label='fit', color='g')
         
-        an = ax.annotate(f'freq = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}',
-                        #  f'cond_pulse_length:{cond_pulse_length}, cond_pulse_amp:{cond_pulse_amp}, detuning:{detuning/1e6}MHz, sigma:{sigma}',
-                        xy=(np.average(disp_amp_sweep_list), np.average(data)),
-                        size=12)
+        freq = popt[1]
+        freq_err = np.sqrt(np.diag(pcov))[1]
+        annotation_text = f"freq = {freq:.4f} ± {freq_err:.4f}\nscaling factor = π x freq"
+
+        an = ax.annotate(annotation_text,
+                     xy=(0.05, 0.95), xycoords='axes fraction',
+                     fontsize=10, ha='left', va='top',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
         an.draggable()
 
-        ax.set_xlabel('Amplitude (a.u.)')
+        ax.set_xlabel('Driving Amplitude')
         ax.set_ylabel(f'[{self.which_data}] (a.u.)')
 
+        ax2 = ax.twiny()
+        ax2.set_xlim(ax.get_xlim())
+        ax2.set_xlabel('Displacement ($\\beta$)')
+
+        xticks = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 6)
+        ax2.set_xticks(xticks)
+        ax2.set_xticklabels([f"{x * np.pi * freq:.2f}" for x in xticks])
+
+        ax.tick_params(axis='both', labelsize=10)
+        ax2.tick_params(axis='x', labelsize=10)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.93])
         plt.show()
+
 
     def disp_pulse_calibration_parity(self, average_exponent=12, amp_start = 0, amp_stop=1, amp_npts = 11, is_plot_simulation=False):
         device_setup = self.device_setup
@@ -3929,9 +4199,9 @@ class ZI_QCCS(object):
                         exp_disp_calibration_parity.reserve(signal="measure")
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -4074,9 +4344,9 @@ class ZI_QCCS(object):
                         exp_out_and_back.reserve(signal="measure")
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -4088,7 +4358,7 @@ class ZI_QCCS(object):
             show_pulse_sheet("out_and_back", compiled_exp_out_and_back)
 
 
-    def plot_out_and_back_measurement(self, Disp_amp_exp=1, Photon_number_exp=1, fitting=False, x_threshold=None, wait_time=1e-6, init_state = "g",):
+    def plot_out_and_back_measurement(self, fitting=False, x_threshold=None,y_threshold=None, wait_time=1e-6, init_state = "g",):
         from sklearn.linear_model import LinearRegression
 
         self.out_and_back_data = self.out_and_back_results.get_data("out_and_back")
@@ -4104,8 +4374,9 @@ class ZI_QCCS(object):
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
         max_drive_amp = cavity_parameters[cavity_component]["cavity_drive_amp"]
+        alpha_1_cavity_drive_amp = cavity_parameters[cavity_component]['alpha_1_cavity_drive_amp']
 
-        x_axis = (Photon_number_exp / Disp_amp_exp ** 2) * np.array(drive_amp_sweep_list*max_drive_amp) ** 2
+        x_axis = np.array(drive_amp_sweep_list*max_drive_amp) ** 2 / alpha_1_cavity_drive_amp**2
         y_axis = phase_sweep_list
         X_grid, Y_grid = np.meshgrid(x_axis, y_axis, indexing='ij')  # shape = (M, N)
         Z_data = data  # shape = (M, N)
@@ -4114,22 +4385,38 @@ class ZI_QCCS(object):
         Y_flat = Y_grid.flatten()
         Z_flat = Z_data.flatten()
 
-        if init_state == "g":
-            z_max = np.max(Z_flat) # 나중에 pi nopi measurement에서 z_max, z_min을 이용해서
-            # z_range를 구하고, 그 범위에 해당하는 데이터만을 선택하여 fitting을 수행.
-            z_min = np.min(Z_flat)
-            z_range = (1/3) * (z_max - z_min)
-            mask = (Z_flat >= z_min) & (Z_flat <= z_min + z_range)
-        else:
-            z_max = np.max(Z_flat)
-            z_min = np.min(Z_flat)
-            z_range = (1/3) * (z_max - z_min)
-            mask = (Z_flat <= z_max) & (Z_flat >= z_max - z_range)
+        self.nopi_value
 
+        if self.nopi_value > self.pi_value: # pi nopi measurement 값을 비교
+            if init_state == "g":
+                z_max = np.max(Z_flat) # 나중에 pi nopi measurement에서 z_max, z_min을 이용해서
+                # z_range를 구하고, 그 범위에 해당하는 데이터만을 선택하여 fitting을 수행.
+                z_min = np.min(Z_flat)
+                z_range = (1/3) * (z_max - z_min)
+                mask = (Z_flat >= z_min) & (Z_flat <= z_min + z_range)
+            else:
+                z_max = np.max(Z_flat)
+                z_min = np.min(Z_flat)
+                z_range = (1/3) * (z_max - z_min)
+                mask = (Z_flat <= z_max) & (Z_flat >= z_max - z_range)
         
+        else:
+            if init_state == "g":
+                z_max = np.max(Z_flat)
+                z_min = np.min(Z_flat)
+                z_range = (1/3) * (z_max - z_min)
+                mask = (Z_flat <= z_max) & (Z_flat >= z_max - z_range)
+            else:
+                z_max = np.max(Z_flat)
+                z_min = np.min(Z_flat)
+                z_range = (1/3) * (z_max - z_min)
+                mask = (Z_flat >= z_min) & (Z_flat <= z_min + z_range)
 
         if x_threshold is not None:
             mask = mask & (X_flat >= x_threshold)
+
+        if y_threshold is not None:
+            mask = mask & (Y_flat <= y_threshold)
 
         X_vals = X_flat[mask].reshape(-1, 1)
         Y_vals = Y_flat[mask]
@@ -4140,7 +4427,7 @@ class ZI_QCCS(object):
         for i in range(len(x_axis)):
             y_mask = (X_vals.flatten() == x_axis[i])
             if np.any(y_mask):
-                mean_value = np.mean(Y_vals[y_mask])  # convert to kHz
+                mean_value = np.mean(Y_vals[y_mask]) 
                 X_avgs.append(x_axis[i])
                 Y_avgs.append(mean_value)
 
@@ -4149,16 +4436,16 @@ class ZI_QCCS(object):
         fit_line = model.predict(np.array(X_avgs).reshape(-1, 1))
         slope = model.coef_[0]
         intercept = model.intercept_
-        print(f" relative frequency(kHz) = {slope/ (wait_time * 1e3 * 2*np.pi):.3f} * Photon # + {intercept/ (wait_time * 1e3 * 2*np.pi):.3f}")
-        print(f" K_c = 2Pi X {-1 * slope/ (2 * wait_time * 1e3 * 2*np.pi):.3f} kHz")
+        print(f" relative frequency(Hz) = {slope/ (wait_time  * 360):.3f} * Photon # + {intercept/ (wait_time  * 360):.3f}")
+        print(f" K_c = 2Pi X {-1 * slope/ (2 * wait_time  * 360):.3f} Hz")
 
         fig2, ax2 = plt.subplots(1, 1, figsize=(10, 6))
         fig2.suptitle("Out and back measurement - Scatter Plot", fontsize=18)
-        plt.scatter(X_avgs, np.array(Y_avgs)/ (wait_time * 1e3 * 2*np.pi) , label=f'Phase = {mean_value:.2f} deg', alpha=1, facecolors='none', edgecolors='black')
-        ax2.plot(X_avgs, fit_line/ (wait_time * 1e3 * 2*np.pi), color='dodgerblue', label='Linear Fit')
+        plt.scatter(X_avgs, np.array(Y_avgs)/ (wait_time  * 360) , label=f'Phase = {mean_value:.2f} deg', alpha=1, facecolors='none', edgecolors='black')
+        ax2.plot(X_avgs, fit_line/ (wait_time  * 360), color='dodgerblue', label='Linear Fit')
         ax2.set_xlabel('Photon number')
-        ax2.set_ylabel('relative frequency (kHz)')
-        ax2.text(0.5, 0.05, f'K_c = {slope/ (2 * wait_time * 1e3 * 2*np.pi):.3f} kHz', transform=ax2.transAxes, fontsize=12, verticalalignment='top')
+        ax2.set_ylabel('relative frequency (Hz)')
+        ax2.text(0.5, 0.05, f'K_c = {slope/ (2 * wait_time  * 360):.3f} Hz', transform=ax2.transAxes, fontsize=12, verticalalignment='top')
         plt.show()
         
         # Create a 2D plot with the original data
@@ -4234,9 +4521,9 @@ class ZI_QCCS(object):
                     exp_qubit_state_revival.reserve(signal="measure")
         
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -4383,9 +4670,9 @@ class ZI_QCCS(object):
         exp_storage_mode_characterization.set_calibration(exp_calibration)
 
         signal_map = {
-            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure_line"],
-            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire_line"],
-            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive_line"],
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
             "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
         }
 
@@ -4437,13 +4724,14 @@ class ZI_QCCS(object):
             pcov = sfit1._curve_fit()[1]
 
             print("popt:", popt)
+            print("pcov:", pcov)
 
             ax[1].plot(delay_sweep_list, 
                     sfit1.func(delay_sweep_list, *popt), label='fit', color='g')
 
-            an = ax[1].annotate(f'freq = {popt[3]:.4f}±{np.sqrt(np.diag(pcov))[3]:.4f}'+'\n'
+            an = ax[1].annotate(f'freq = {popt[3]:.4f}±{np.sqrt(np.diag(pcov))[3]:.4f}Hz'+'\n'
                                 + f'omega = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
-                                + f'T1 = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f}',
+                                + f'T1 = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f}s',
                             xy=(np.average(delay_sweep_list), np.average(data[0]-data[1])*0.95))
             an.draggable()
 
@@ -4456,3 +4744,379 @@ class ZI_QCCS(object):
 
         plt.show()
 
+# In[]
+
+    def wigner_characteristic_function_2D(self, average_exponent=12, 
+                                    npts_x = 21,
+                                    npts_y = 21,
+                                    amplitude = 0,
+                                    is_wigner_function=False,
+                                    is_coherent_state=False,
+                                    is_schrodinger_cat_state=False,
+                                    is_schrodinger_cat_state_2=False,
+                                    is_cat_state=False,
+                                    alpha = 1, # for cat state
+                                    beta = 1, # for cat state
+                                    qubit_phase = 0,
+                                    is_correction = False,
+                                    is_plot_simulation=False):
+        
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        self.exp_wigner_characteristic_function_amplitude = amplitude
+        self.is_wigner_function = is_wigner_function
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        cond_disp_pulse, cavity_drive_pulse = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
+
+        phase = qubits_parameters[qubits_component]["readout_phase"]
+
+        # Create a 2D grid of complex amplitudes from (-amp_range-1j*amp_range) to (amp_range+1j*amp_range)
+        real_vals = np.linspace(-0.5, 0.5, npts_x) # should not be over unity
+        imag_vals = np.linspace(-0.5, 0.5, npts_y) # should not be over unity
+        amplitude_grid = (real_vals[:, None] + 1j * imag_vals[None, :]).T
+        
+        self.amp_npts_x = npts_x
+        self.amp_npts_y = npts_y
+
+        # Sweep parameters
+        amplitude_sweep = SweepParameter(uid="amp_sweep", values=amplitude_grid.flatten())
+
+        if is_correction:
+            sweep_case = LinearSweepParameter(uid="correction", start=0, stop=1, count=2)
+        else:
+            sweep_case = LinearSweepParameter(uid="correction", start=0, stop=0, count=1)
+    
+        # Define the experiment
+        exp_wigner_characteristic_function = Experiment(
+            uid="wigner_function",
+            signals=[
+                ExperimentSignal("drive"),
+                ExperimentSignal("cavity_drive"),
+                ExperimentSignal("measure"),
+                ExperimentSignal("acquire"),
+            ],
+        )
+
+        def displaced_coherent_state():
+
+            with exp_wigner_characteristic_function.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+
+                exp_wigner_characteristic_function.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude)
+        
+        def schrodinger_cat_state():
+            with exp_wigner_characteristic_function.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                with exp_wigner_characteristic_function.section(uid="qubit_preparation"):
+                    exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse)
+                with exp_wigner_characteristic_function.section(uid="CNOD", play_after="qubit_preparation"):
+                    self.CNOD(exp=exp_wigner_characteristic_function, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=1,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None)
+
+        def schrodinger_cat_state_2():
+            with exp_wigner_characteristic_function.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+
+                with exp_wigner_characteristic_function.section(uid="alpha"):
+                    exp_wigner_characteristic_function.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude)
+                with exp_wigner_characteristic_function.section(uid="qubit", play_after="alpha"):
+                    exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse)
+                    exp_wigner_characteristic_function.delay(signal="drive", time=np.abs(1/(2*cavity_parameters[cavity_component]["cavity_mode_chi"])/2)) # delay for cross Kerr effect
+
+        def cat_state():
+            with exp_wigner_characteristic_function.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                with exp_wigner_characteristic_function.section(uid="qubit_preparation"):
+                    exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse)
+                with exp_wigner_characteristic_function.section(uid="CNOD_1", play_after="qubit_preparation"):
+                    self.CNOD(exp=exp_wigner_characteristic_function, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=alpha,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None,
+                            uid1 = "cond_disp_pulse_1", uid2 = "cond_disp_pulse_2", pi_pulse_uid = "pi_pulse_1")
+                with exp_wigner_characteristic_function.section(uid="qubit_1", play_after="CNOD_1"):
+                    exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse)
+                with exp_wigner_characteristic_function.section(uid="CNOD_2", play_after="qubit_1"):
+                    self.CNOD(exp=exp_wigner_characteristic_function, cond_disp_pulse=cond_disp_pulse,
+                            pi_pulse=pi_pulse, amp=1j*beta,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            prev_uid=None,
+                            uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid = "pi_pulse_2")
+                with exp_wigner_characteristic_function.section(uid="qubit_2", play_after="CNOD_2"):
+                    exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse, phase=np.pi/2)
+
+
+        with exp_wigner_characteristic_function.acquire_loop_rt(
+            uid="shots",
+            count=2**average_exponent,
+            averaging_mode=AveragingMode.CYCLIC,
+            acquisition_type=AcquisitionType.INTEGRATION,
+            reset_oscillator_phase=True,
+        ):
+            with exp_wigner_characteristic_function.sweep(uid="correction", parameter=sweep_case):
+                with exp_wigner_characteristic_function.sweep(uid="amplitude_sweep", parameter=amplitude_sweep, auto_chunking = True, reset_oscillator_phase=True):
+
+                    if is_coherent_state:
+                        displaced_coherent_state()
+                    elif is_schrodinger_cat_state:
+                        schrodinger_cat_state()
+                    elif is_schrodinger_cat_state_2:
+                        schrodinger_cat_state_2()
+                    elif is_cat_state:
+                        cat_state()
+
+                    #### wigner function measurement ####
+
+                    if is_wigner_function:
+
+                        self.wigner_function(exp=exp_wigner_characteristic_function, cavity_drive_pulse=cavity_drive_pulse, 
+                                            pi2_pulse=pi2_pulse, amplitude_sweep=amplitude_sweep, sweep_case=sweep_case)
+                    else:
+
+                        self.characteristic_function(exp=exp_wigner_characteristic_function,
+                                                    pi2_pulse=pi2_pulse, pi_pulse=pi_pulse, 
+                                                    cond_disp_pulse=cond_disp_pulse,
+                                                    amplitude_sweep=amplitude_sweep, qubit_phase = qubit_phase)
+
+                    with exp_wigner_characteristic_function.section(uid="measure", play_after="qubit_excitation_2"):
+                        exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
+                        exp_wigner_characteristic_function.acquire(signal="acquire",
+                                                handle="wigner_characteristic_function_measurement",
+                                                kernel=readout_weighting_function)
+                        
+                    with exp_wigner_characteristic_function.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                        exp_wigner_characteristic_function.reserve(signal="measure")
+
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+            "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+        }
+
+        exp_wigner_characteristic_function.set_signal_map(signal_map)
+        compiled_exp_wigner_characteristic_function = self.session.compile(exp_wigner_characteristic_function)
+        self.wigner_characteristic_function_results = self.session.run(compiled_exp_wigner_characteristic_function)
+        if is_plot_simulation:
+            self.simulation_plot(compiled_exp_wigner_characteristic_function, start_time=0, length=20e-6)
+            show_pulse_sheet("wigner_characteristic_function", compiled_exp_wigner_characteristic_function)
+
+    def plot_wigner_characteristic_function_measurement_2D(self, vmin, vmax):
+
+        cavity_parameters = self.cavity_parameters
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        
+        alpha_1_cavity_drive_amp = cavity_parameters[cavity_component]["alpha_1_cavity_drive_amp"]
+        cavity_drive_amp = cavity_parameters[cavity_component]["cavity_drive_amp"]
+        cond_disp_pulse_amp = cavity_parameters[cavity_component]["cond_disp_pulse_amp"]
+        alpha_1_CNOD_amp = cavity_parameters[cavity_component]["alpha_1_CNOD_amp"]
+
+        length = cavity_parameters[cavity_component]["cavity_drive_length"]
+        # amp = self.exp_wigner_function_amplitude * cavity_drive_amp
+
+        self.wigner_characteristic_function_data = self.wigner_characteristic_function_results.get_data("wigner_characteristic_function_measurement")
+        
+
+        if self.which_data == "I":
+            data = np.real(self.wigner_characteristic_function_data)
+        else:
+            data = np.imag(self.wigner_characteristic_function_data)
+
+        amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[1]
+
+
+        if self.is_wigner_function:
+            Z = amplitude_sweep_list.reshape((self.amp_npts_y, self.amp_npts_x))
+            x = np.real(Z) * cavity_drive_amp/alpha_1_cavity_drive_amp # scaling to alpha (photon number)
+            y = np.imag(Z) * cavity_drive_amp/alpha_1_cavity_drive_amp   # scaling to alpha (photon number)
+            data = data.reshape((self.amp_npts_y, self.amp_npts_x))
+
+        else:
+            Z = amplitude_sweep_list.reshape((self.amp_npts_y, self.amp_npts_x))
+            x = np.real(Z) * cond_disp_pulse_amp/alpha_1_CNOD_amp # scaling to alpha (photon number)
+            y = np.imag(Z) * cond_disp_pulse_amp/alpha_1_CNOD_amp   # scaling to alpha (photon number)
+            data = data.reshape((self.amp_npts_y, self.amp_npts_x))
+
+        np.save(f"wigner_characteristic_function", self.wigner_characteristic_function_data)
+        np.save(f"Z_value", Z)
+        ############# Plotting the data #####################
+
+        plt.figure(figsize=(10, 10))
+        pcm = plt.pcolormesh(x, y, data, shading='auto', cmap='RdBu_r', vmin = vmin, vmax = vmax)
+        plt.colorbar(pcm, label=f'[{self.which_data}] (a.u.)')
+        if self.is_wigner_function:
+            plt.title(f"Wigner function")
+        else:
+            plt.title(f"Characteristic function")
+        plt.xlabel(r'Re($\alpha$)')
+        plt.ylabel(r'Im($\alpha$)')
+
+        plt.show()
+
+############ sweep beta for calibration of cnod amplitude used for disentanglement of the cat
+    def disentangling_power_sweep(self, average_exponent=12,
+                                  alpha = 1,
+                                  beta_sweep_start = -1,
+                                  beta_sweep_stop = 1,
+                                  beta_sweep_count = 21,
+                                  is_xyz=False,
+                                  is_plot_simulation=False):
+
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        cond_disp_pulse, cavity_drive_pulse = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
+
+        phase = qubits_parameters[qubits_component]["readout_phase"]
+
+        self.disentangling_power_sweep_alpha = alpha
+
+        beta_sweep = LinearSweepParameter(uid="beta_sweep", start=beta_sweep_start, stop=beta_sweep_stop, count=beta_sweep_count)
+
+        if is_xyz:
+            sweep_case = LinearSweepParameter(uid="correction", start=0, stop=2, count=3)
+            self.is_xyz = True
+        else:
+            sweep_case = LinearSweepParameter(uid="correction", start=0, stop=0, count=1)
+        
+        def _xyz(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(sweep_case, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=sweep_case):
+                        for v in sweep_case.values:
+                            with exp.case(v):
+                                f(v)
+    
+            return decorator
+
+        # Define the experiment
+        exp_disentangling_power_sweep = Experiment(
+            uid="disentangling_power_sweep",
+            signals=[
+                ExperimentSignal("drive"),
+                ExperimentSignal("cavity_drive"),
+                ExperimentSignal("measure"),
+                ExperimentSignal("acquire"),
+            ],
+        )
+
+        with exp_disentangling_power_sweep.acquire_loop_rt(
+            uid="shots",
+            count=2**average_exponent,
+            averaging_mode=AveragingMode.CYCLIC,
+            acquisition_type=AcquisitionType.INTEGRATION,
+            reset_oscillator_phase=True,
+        ):
+            with exp_disentangling_power_sweep.sweep(uid="xyz", parameter=sweep_case):
+                with exp_disentangling_power_sweep.sweep(uid="amplitude_sweep", parameter=beta_sweep, auto_chunking = True, reset_oscillator_phase=True):
+
+                    with exp_disentangling_power_sweep.section(uid="preparation", alignment=SectionAlignment.RIGHT):
+                        with exp_disentangling_power_sweep.section(uid="qubit_preparation"):
+                            exp_disentangling_power_sweep.play(signal="drive", pulse=pi2_pulse)
+                        with exp_disentangling_power_sweep.section(uid="CNOD_1", play_after="qubit_preparation"):
+                            self.CNOD(exp=exp_disentangling_power_sweep, cond_disp_pulse=cond_disp_pulse,
+                                    pi_pulse=pi_pulse, amp=alpha,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                                    prev_uid=None,
+                                    uid1 = "cond_disp_pulse_1", uid2 = "cond_disp_pulse_2", pi_pulse_uid = "pi_pulse_1")
+                        with exp_disentangling_power_sweep.section(uid="qubit_1", play_after="CNOD_1"):
+                            exp_disentangling_power_sweep.play(signal="drive", pulse=pi2_pulse)
+                        with exp_disentangling_power_sweep.section(uid="CNOD_2", play_after="qubit_1"):
+                            self.CNOD(exp=exp_disentangling_power_sweep, cond_disp_pulse=cond_disp_pulse,
+                                    pi_pulse=pi_pulse, amp=1j*beta_sweep,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                                    prev_uid=None,
+                                    uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid = "pi_pulse_2")
+                        with exp_disentangling_power_sweep.section(uid="qubit_2", play_after="CNOD_2"):
+                            @_xyz(sweep_case, exp=exp_disentangling_power_sweep)
+                            def play_drive(v):
+                                if v == 0: # X
+                                    exp_disentangling_power_sweep.play(signal="drive", pulse=pi2_pulse, phase = 0)
+                                elif v == 1: # Y
+                                    exp_disentangling_power_sweep.play(signal="drive", pulse=pi2_pulse, phase = np.pi/2)
+                                elif v == 2: # Z
+                                    pass
+               
+                    with exp_disentangling_power_sweep.section(uid="measure", play_after="preparation"):
+                        exp_disentangling_power_sweep.play(signal="measure", pulse=readout_pulse, phase=phase)
+                        exp_disentangling_power_sweep.acquire(signal="acquire",
+                                                handle="disentangling_power_sweep",
+                                                kernel=readout_weighting_function)
+                        
+                    with exp_disentangling_power_sweep.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                        exp_disentangling_power_sweep.reserve(signal="measure")
+
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+            "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+        }
+
+        exp_disentangling_power_sweep.set_signal_map(signal_map)
+        compiled_exp_disentangling_power_sweep = self.session.compile(exp_disentangling_power_sweep)
+        self.disentangling_power_sweep_results = self.session.run(compiled_exp_disentangling_power_sweep)
+        if is_plot_simulation:
+            self.plot_results(self.disentangling_power_sweep_results)
+            self.simulation_plot(compiled_exp_disentangling_power_sweep, start_time=0, length=20e-6)
+            show_pulse_sheet("disentangling_power_sweep", compiled_exp_disentangling_power_sweep)
+    
+    def plot_disentangling_power_sweep(self):
+
+        self.disentangling_power_sweep_data = self.disentangling_power_sweep_results.get_data("disentangling_power_sweep")
+
+        if self.which_data == "I":
+            data = np.real(self.disentangling_power_sweep_data)
+        else:
+            data = np.imag(self.disentangling_power_sweep_data)
+
+        beta_sweep_list = self.disentangling_power_sweep_results.acquired_results['disentangling_power_sweep'].axis[1]
+
+        cavity_parameters = self.cavity_parameters
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        cond_disp_pulse_amp = cavity_parameters[cavity_component]['cond_disp_pulse_amp']
+        alpha_1_CNOD_amp = cavity_parameters[cavity_component]["alpha_1_CNOD_amp"]
+
+        ############# Plotting the data #####################
+
+        if self.is_xyz:
+            fig, ax = plt.subplots(3, 1, figsize=(20, 12))
+            fig.suptitle(f"disentangling power sweep, alpha = {cond_disp_pulse_amp/alpha_1_CNOD_amp*self.disentangling_power_sweep_alpha}", fontsize=18)
+
+            ax[0].plot(cond_disp_pulse_amp/alpha_1_CNOD_amp*beta_sweep_list, data[0], marker='o', linestyle=':', color='k', label='<X>')
+            ax[1].plot(cond_disp_pulse_amp/alpha_1_CNOD_amp*beta_sweep_list, data[1], marker='o', linestyle=':', color='k', label='<Y>')
+            ax[2].plot(cond_disp_pulse_amp/alpha_1_CNOD_amp*beta_sweep_list, data[2], marker='o', linestyle=':', color='k', label='<Z>')
+
+            ax[0].legend()
+            ax[1].legend()
+            ax[2].legend()
+        
+        else:
+            fig, ax = plt.subplots(1, 1, figsize=(20, 12))
+            fig.suptitle(f"disentangling power sweep, alpha = {cond_disp_pulse_amp/alpha_1_CNOD_amp*self.disentangling_power_sweep_alpha}", fontsize=18)
+
+            ax.plot(cond_disp_pulse_amp/alpha_1_CNOD_amp*beta_sweep_list, data, marker='o', linestyle=':', color='k', label='<X>')
+
+            ax.legend()
+
+        fig.text(0.5, 0.04, 'Beta (a.u.)', ha='center', fontsize=16)
+
+
+# In[]
