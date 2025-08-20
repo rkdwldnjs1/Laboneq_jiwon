@@ -16,6 +16,7 @@ __all__ = [
     "ExperimentSerializer",
     "QPUSerializer",
     "LabOneQEnumSerializer",
+    "QuantumParametersSerializer",
     "QuantumElementSerializer",
     "ResultsSerializer",
     "RunExperimentResultsSerializer",
@@ -27,15 +28,15 @@ __all__ = [
     "WorkflowNamespaceSerializer",
 ]
 
-from .compiled_experiment import CompiledExperimentSerializer
 from .calibration import CalibrationSerializer
+from .compiled_experiment import CompiledExperimentSerializer
 from .device_setup import DeviceSetupSerializer
-from .experiment import ExperimentSerializer
-from .qpu import QPUSerializer
 from .enums import LabOneQEnumSerializer
-from .workflow_options import WorkflowOptionsSerializer, TaskOptionsSerializer
-from .quantum_element import QuantumElementSerializer
+from .experiment import ExperimentSerializer
+from .numpy_array import NumpyArraySerializer
+from .qpu import QPUSerializer
+from .quantum_element import QuantumParametersSerializer, QuantumElementSerializer
 from .results import ResultsSerializer
 from .run_experiment_results import RunExperimentResultsSerializer
-from .numpy_array import NumpyArraySerializer
 from .workflow_namespace import WorkflowNamespaceSerializer
+from .workflow_options import TaskOptionsSerializer, WorkflowOptionsSerializer

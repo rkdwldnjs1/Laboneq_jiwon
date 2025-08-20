@@ -4,27 +4,35 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+import attrs
 
 from laboneq.core.utilities.dsl_dataclass_decorator import classformatter
 from laboneq.dsl.enums import CarrierType, ModulationType
-
-if TYPE_CHECKING:
-    from laboneq.dsl import Parameter
+from laboneq.dsl.parameter import Parameter
 
 oscillator_id = 0
 
 
-def oscillator_uid_generator():
+def oscillator_uid_generator() -> str:
     global oscillator_id
     retval = f"osc_{oscillator_id}"
     oscillator_id += 1
     return retval
 
 
+def _carrier_type_validator(
+    _self: Oscillator, _attribute: attrs.Attribute, value: CarrierType | None
+) -> None:
+    if value is not None:
+        warnings.warn(
+            "`Oscillator` argument `carrier_type` will be removed in the future versions. It has no functionality.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
+
 @classformatter
-@dataclass(init=True, repr=True, order=True)
+@attrs.define(slots=False)
 class Oscillator:
     """
     This oscillator class represents an oscillator on a `PhysicalChannel`.
@@ -54,18 +62,9 @@ class Oscillator:
                  always fall back to `SOFTWARE`.
     """
 
-    uid: str = field(default_factory=oscillator_uid_generator)
-    frequency: float | Parameter | None = field(default=None)
-    modulation_type: ModulationType = field(default=ModulationType.AUTO)
-    carrier_type: CarrierType = field(default=None)
-
-    def __post_init__(self):
-        if self.carrier_type is not None:
-            warnings.warn(
-                "`Oscillator` argument `carrier_type` will be removed in the future versions. It has no functionality.",
-                FutureWarning,
-                stacklevel=2,
-            )
-
-    def __hash__(self):
-        return hash(self.uid)
+    uid: str = attrs.field(factory=oscillator_uid_generator)
+    frequency: float | Parameter | None = attrs.field(default=None)
+    modulation_type: ModulationType = attrs.field(default=ModulationType.AUTO)
+    carrier_type: CarrierType | None = attrs.field(
+        default=None, validator=_carrier_type_validator
+    )

@@ -10,6 +10,7 @@ from itertools import chain
 
 from laboneq.core.exceptions.laboneq_exception import LabOneQException
 from laboneq.dsl import enums, parameter, quantum
+from laboneq.dsl.calibration import Calibration
 from laboneq.dsl.experiment import Experiment, Section
 from laboneq.dsl.experiment.experiment_signal import ExperimentSignal
 from laboneq.dsl.quantum.quantum_element import QuantumElement
@@ -18,6 +19,40 @@ from laboneq.openqasm3.options import MultiProgramOptions, SingleProgramOptions
 from laboneq.openqasm3 import device
 
 _logger = logging.getLogger(__name__)
+
+
+def _calibration_from_qubits(
+    qubits: list[QuantumElement],
+) -> dict[str,]:
+    """Return the calibration objects from a list of qubits."""
+    calibration = {}
+    for qubit in qubits:
+        if isinstance(qubit, QuantumElement):
+            calibration.update(qubit.calibration())
+        else:
+            # handle lists or tuples of qubits:
+            for q in qubit:
+                calibration.update(q.calibration())
+    return calibration
+
+
+def _copy_set_frequency_calibration(implicit_calibration: Calibration, exp: Experiment):
+    """Copy set_frequency values from the implicit visitor calibration to the experiment."""
+    # TODO: This function should be removed and instead the experiment calibration should be
+    #       accessible in the visitor so that it can be modified directly if needed.
+    #       Possibly we could do this using a `set_frequency` quantum operation.
+    exp_calibration = exp.get_calibration()
+    for signal, signal_calibration in implicit_calibration.items():
+        exp_signal_calibration = exp_calibration.get(signal)
+        if exp_signal_calibration is None or exp_signal_calibration.oscillator is None:
+            raise ValueError(
+                f"Sweeping or setting the frequency of signal {signal!r}"
+                f" requires a signal calibration with oscillator to be set."
+            )
+        assert signal_calibration.oscillator is not None
+        exp_signal_calibration.oscillator.frequency = (
+            signal_calibration.oscillator.frequency
+        )
 
 
 class OpenQASMTranspiler:
@@ -37,7 +72,7 @@ class OpenQASMTranspiler:
     def __init__(self, qpu: quantum.QPU):
         self.qpu = qpu
         self._qubit_signals: set[str] = set(
-            chain.from_iterable([q.signals.values() for q in self.qpu.qubits])
+            chain.from_iterable([q.signals.values() for q in self.qpu.quantum_elements])
         )
 
     def section(
@@ -147,7 +182,7 @@ class OpenQASMTranspiler:
                 **acquisition_type**:
                     The type of acquisition to perform.
                     The acquisition type may also be specified within the
-                    OpenQASM program using `pragma zi.acqusition_type raw`,
+                    OpenQASM program using `pragma zi.acquisition_type raw`,
                     for example.
                     If an acquisition type is passed here, it overrides
                     any value set by a pragma.
@@ -198,6 +233,10 @@ class OpenQASMTranspiler:
 
         # TODO: feed qubits directly to experiment when feature is implemented
         exp = Experiment(signals=_experiment_signals(qubit_map))
+
+        calibration = Calibration(_calibration_from_qubits(qubit_map.values()))
+        exp.set_calibration(calibration)
+
         with exp.acquire_loop_rt(
             count=options.count,
             averaging_mode=options.averaging_mode,
@@ -206,7 +245,7 @@ class OpenQASMTranspiler:
         ) as loop:
             loop.add(qasm_section)
 
-        exp.set_calibration(ret.implicit_calibration)
+        _copy_set_frequency_calibration(ret.implicit_calibration, exp)
         return exp
 
     def batch_experiment(
@@ -274,7 +313,7 @@ class OpenQASMTranspiler:
                 **acquisition_type**:
                     The type of acquisition to perform.
                     The acquisition type may also be specified within the
-                    OpenQASM program using `pragma zi.acqusition_type raw`,
+                    OpenQASM program using `pragma zi.acquisition_type raw`,
                     for example.
                     If an acquisition type is passed here, it overrides
                     any value set by a pragma.
@@ -293,28 +332,32 @@ class OpenQASMTranspiler:
                     disabled. In a future version we hope to make an explicit `repetition_time` optional.
 
                 **batch_execution_mode**:
-                    The execution mode for the sequence of programs. Can be any of the following.
+                    The execution mode for the sequence of programs. Can be any of the following:
 
-                * `nt`: The individual programs are dispatched by software.
-                * `pipeline`: The individual programs are dispatched by the sequence pipeliner.
-                * `rt`: All the programs are combined into a single real-time program.
+                    * `nt`: The individual programs are dispatched by software.
+                    * `pipeline`: The individual programs are dispatched by the sequence pipeliner.
+                    * `rt`: All the programs are combined into a single real-time program.
 
-                `rt` offers the fastest execution, but is limited by device memory.
-                In comparison, `pipeline` introduces non-deterministic delays between
-                programs of up to a few 100 microseconds. `nt` is the slowest.
+                    `rt` offers the fastest execution, but is limited by device memory.
+                    In comparison, `pipeline` introduces non-deterministic delays between
+                    programs of up to a few 100 microseconds. `nt` is the slowest.
 
                 **add_reset**:
                     If `True`, an active reset operation is added to the beginning of each program.
 
-                Note: Requires `reset(qubit)` operation to be defined for each qubit.
+                    Note: Requires `reset(qubit)` operation to be defined for each qubit.
 
                 **add_measurement**:
                     If `True`, add measurement at the end of each program for all qubits used.
 
-                Note: Requires `measure(qubit, handle: str)` operation to be defined for each qubit, where `handle`
-                is the key specified for the qubit in the `qubit_map` parameter (e.g. `q0`) or
-                `<key>[N]` in the case of an qubit register as a list of qubits (e.g. `q[0]`, `q[1]`, ..., `q[N]`,
-                where `N` represents the qubit index in the supplied register).
+                    Note: Requires `measure(qubit, handle: str)` operation to be defined for each qubit, where `handle`
+                    is the key specified for the qubit in the `qubit_map` parameter (e.g. `q0`) or
+                    `<key>[N]` in the case of an qubit register as a list of qubits (e.g. `q[0]`, `q[1]`, ..., `q[N]`,
+                    where `N` represents the qubit index in the supplied register).
+
+                **add_measurement_handle**:
+                    A template for the handles of measurements added when `add_measurement` is true.
+                    Defaults to `{qubit.uid}/result`.
 
                 **pipeline_chunk_count**:
                     The number of pipeline chunks to divide the experiment into.
@@ -358,6 +401,10 @@ class OpenQASMTranspiler:
                 )
 
         exp = Experiment(signals=_experiment_signals(qubit_map))
+
+        calibration = Calibration(_calibration_from_qubits(qubit_map.values()))
+        exp.set_calibration(calibration)
+
         experiment_index = parameter.LinearSweepParameter(
             uid="index",
             start=0,
@@ -426,9 +473,12 @@ class OpenQASMTranspiler:
                     if options.add_measurement:
                         with exp.section(uid="qubit_readout") as readout_section:
                             for qubit in _flatten_qubits(qubit_map):
+                                handle = options.add_measurement_handle.format(
+                                    qubit=qubit
+                                )
                                 readout_section.add(
                                     self.qpu.quantum_operations["measure"](
-                                        qubit, handle=qubit.uid
+                                        qubit, handle=handle
                                     )
                                 )
                                 if options.add_reset:
@@ -453,12 +503,12 @@ class OpenQASMTranspiler:
             if isinstance(function_or_port, device.Port):
                 uid = function_or_port.qubit
                 signal = function_or_port.signal
-                qubit = self.qpu.qubit_by_uid(uid)
+                qubit = self.qpu.quantum_element_by_uid(uid)
                 if signal in qubit.signals:
                     # Partial path
                     # Qubit signal lookup does not work with full paths (e.g. alias drive/drive_line)
                     out[name] = qubit.signals[signal]
-                elif signal in signal in self._qubit_signals:
+                elif signal in self._qubit_signals:
                     out[name] = signal
                 else:
                     msg = f"Invalid port mapping. Signal {function_or_port} could not be found within qubits."
@@ -476,9 +526,9 @@ class OpenQASMTranspiler:
             if isinstance(uid_or_qubit, quantum.QuantumElement):
                 # Will raise KeyError if qubit does not exists.
                 # Use the supplied qubit if the UID exists in QPU.
-                self.qpu.qubit_by_uid(uid_or_qubit.uid)
+                self.qpu.quantum_element_by_uid(uid_or_qubit.uid)
                 return uid_or_qubit
-            return self.qpu.qubit_by_uid(uid_or_qubit)
+            return self.qpu.quantum_element_by_uid(uid_or_qubit)
         except KeyError as error:
             msg = f"Qubit {uid_or_qubit} does not exist in the QPU."
             raise ValueError(msg) from error

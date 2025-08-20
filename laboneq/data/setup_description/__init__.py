@@ -80,9 +80,8 @@ class ChannelMapEntry:
 
 @dataclass
 class ReferenceClock:
-    source: ReferenceClockSource | None = (
-        None  # `None` means decision is deferred to controller
-    )
+    # `None` means decision is deferred to controller
+    source: ReferenceClockSource | None = None
 
 
 @dataclass(unsafe_hash=True)
@@ -111,7 +110,7 @@ class Instrument:
     address: str
     device_type: DeviceType
     server: Server
-    device_options: str = None
+    device_options: str | None = None
     interface: str = "1GbE"
     reference_clock: ReferenceClock = field(default_factory=ReferenceClock)
     ports: List[Port] = field(default_factory=list)
@@ -135,7 +134,7 @@ class SetupInternalConnection:
     """
 
     from_instrument: Instrument
-    from_port: Port
+    from_port: Port | None
     to_instrument: Instrument
     to_port: Port
 

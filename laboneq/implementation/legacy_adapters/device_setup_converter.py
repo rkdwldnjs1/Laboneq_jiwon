@@ -28,6 +28,7 @@ from laboneq.data.setup_description import (
 from laboneq.dsl import device as legacy_device
 from laboneq.dsl.device import instruments as legacy_instruments
 from laboneq.dsl.device import io_units as legacy_io_units
+from laboneq.dsl.device.instruments.zi_standard_instrument import ZIStandardInstrument
 from laboneq.implementation.legacy_adapters import calibration_converter, utils
 from laboneq.implementation.legacy_adapters.utils import (
     LogicalSignalPhysicalChannelUID,
@@ -38,9 +39,6 @@ from laboneq.implementation.utils import devices
 if TYPE_CHECKING:
     from laboneq.dsl.device import logical_signal_group as legacy_lsg
     from laboneq.dsl.device import servers as legacy_servers
-    from laboneq.dsl.device.instruments.zi_standard_instrument import (
-        ZIStandardInstrument,
-    )
 
 
 def convert_io_direction(obj: legacy_enums.io_direction.IODirection) -> IODirection:
@@ -116,7 +114,7 @@ def convert_device_type(target: ZIStandardInstrument) -> DeviceType:
 
 def convert_physical_channel_type(
     target: legacy_io_units.PhysicalChannelType | None,
-) -> PhysicalChannelType | None:
+) -> PhysicalChannelType:
     if target == legacy_io_units.PhysicalChannelType.IQ_CHANNEL:
         return PhysicalChannelType.IQ_CHANNEL
     if target == legacy_io_units.PhysicalChannelType.RF_CHANNEL:
@@ -126,7 +124,7 @@ def convert_physical_channel_type(
 
 def convert_physical_channel(
     target: legacy_io_units.PhysicalChannel,
-    direction: legacy_enums.io_direction.IODirection,
+    direction: IODirection,
 ) -> PhysicalChannel:
     pc_helper = utils.LogicalSignalPhysicalChannelUID(target.uid)
 
@@ -170,7 +168,9 @@ class PortConverter:
         elif isinstance(target, legacy_instruments.QHUB):
             return devices.qhub_ports()
         elif isinstance(target, legacy_instruments.PRETTYPRINTERDEVICE):
-            return devices.test_device_ports([port.uid for port in target.ports])
+            return devices.test_device_ports(
+                [port.uid for port in target.ports if port.uid is not None]
+            )
         elif isinstance(target, legacy_instruments.NonQC):
             return devices.nonqc_ports()
         else:
@@ -236,12 +236,14 @@ class LegacyConnectionFinder:
 
     def connections_from_port_to_another_device(
         self,
-    ) -> Iterator[tuple[str, legacy_device.Port]]:
+    ) -> Iterator[tuple[str, legacy_device.Port | None]]:
         """Connections that go into the another device port."""
         for conn in self.connections:
             remote_logical_signal = self._legacy_ls_lookup.get(conn.remote_path)
             if not remote_logical_signal:
-                from_port = self._ports[conn.local_port]
+                from_port = (
+                    None if conn.local_port is None else self._ports[conn.local_port]
+                )
                 if conn.signal_type in {
                     legacy_enums.IOSignalType.ZSYNC,
                     legacy_enums.IOSignalType.DIO,
@@ -265,7 +267,7 @@ class InstrumentConverter:
         self._legacy_ls_to_new_map = legacy_ls_to_new_map
         self.port_converter = PortConverter(src)
         self.connection_converter = LegacyConnectionFinder(
-            self._src, legacy_ls_to_new_map.keys()
+            src, legacy_ls_to_new_map.keys()
         )
         self._server = server
 
@@ -377,7 +379,7 @@ class _InstrumentsLookup:
 
 def _make_internal_connection_to_same_type_input_port(
     from_instrument: Instrument,
-    from_port: Port,
+    from_port: Port | None,
     to_instrument: Instrument,
     to_port_type: PortType,
 ) -> SetupInternalConnection:
@@ -387,8 +389,9 @@ def _make_internal_connection_to_same_type_input_port(
             to_port = to_instrument_port
             break
     if not to_port:
+        from_port_str = "" if from_port is None else f" '{from_port}'"
         raise LabOneQException(
-            f"Instrument '{from_instrument.uid}' '{from_port}' has a connection to an"
+            f"Instrument '{from_instrument.uid}'{from_port_str} has a connection to an"
             f" instrument '{to_instrument.uid}' without '{to_port_type}' ports."
         )
     return SetupInternalConnection(
@@ -428,13 +431,17 @@ def make_device_to_device_connections(
             device_uid,
             port,
         ) in converter.connection_converter.connections_from_port_to_another_device():
-            from_port = converter.port_converter.ports_by_legacy_uid(port.uid)[0]
+            from_port = (
+                None
+                if port is None
+                else converter.port_converter.ports_by_legacy_uid(port.uid)[0]
+            )
             to_instrument = instrument_lookup.get_instrument(device_uid)
             connection = _make_internal_connection_to_same_type_input_port(
                 from_instrument=converter.instrument,
                 from_port=from_port,
                 to_instrument=to_instrument,
-                to_port_type=from_port.type,
+                to_port_type=PortType.ZSYNC if from_port is None else from_port.type,
             )
             conns.append(connection)
     return conns
@@ -445,8 +452,7 @@ def combine_shfqa_and_shfsg(
 ) -> legacy_instruments.SHFQC:
     if shfqa.interface != shfsg.interface:
         raise AssertionError(
-            f"Virtual SHFQA {shfqa.uid} and SHFSG {shfsg.uid} have different"
-            " interfaces"
+            f"Virtual SHFQA {shfqa.uid} and SHFSG {shfsg.uid} have different interfaces"
         )
     if shfqa.server_uid != shfsg.server_uid:
         raise AssertionError(
@@ -455,8 +461,7 @@ def combine_shfqa_and_shfsg(
         )
     if shfqa.address != shfsg.address:
         raise AssertionError(
-            f"Virtual SHFQA {shfqa.uid} and SHFSG {shfsg.uid} have different"
-            " addresses"
+            f"Virtual SHFQA {shfqa.uid} and SHFSG {shfsg.uid} have different addresses"
         )
     if shfqa.reference_clock_source != shfsg.reference_clock_source:
         raise AssertionError(
@@ -514,6 +519,7 @@ def convert_device_setup_to_setup(
             servers[instr.server_uid],
         )
         for instr in device_setup.instruments
+        if isinstance(instr, ZIStandardInstrument) and instr.server_uid is not None
     ]
 
     instruments = [converter.instrument for converter in converters]

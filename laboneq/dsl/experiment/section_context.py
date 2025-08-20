@@ -165,20 +165,20 @@ class SweepSectionContextManager(SectionContextManagerBase):
     def __init__(
         self,
         parameters,
-        execution_type=None,
         uid=None,
         name=None,
         alignment=None,
         reset_oscillator_phase=False,
         chunk_count=1,
+        auto_chunking=False,
     ):
-        kwargs = dict(parameters=parameters, chunk_count=chunk_count)
+        kwargs = dict(
+            parameters=parameters, chunk_count=chunk_count, auto_chunking=auto_chunking
+        )
         if uid is not None:
             kwargs["uid"] = uid
         if name is not None:
             kwargs["name"] = name
-        if execution_type is not None:
-            kwargs["execution_type"] = execution_type
         if alignment is not None:
             kwargs["alignment"] = alignment
         if reset_oscillator_phase is not None:
@@ -319,8 +319,8 @@ class PRNGLoopContextManager(SectionContextManagerBase):
         return section.prng_sample
 
 
-def active_section() -> Section:
-    s = peek_context()
-    if s is None or not isinstance(s, SectionContext):
-        raise LabOneQException("Must be in a section context")
-    return s.section
+def current_section_context() -> SectionContext | None:
+    context = peek_context()
+    if context is None or not isinstance(context, SectionContext):
+        return None
+    return context

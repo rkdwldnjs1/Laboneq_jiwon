@@ -93,3 +93,4 @@ def current_experiment_context() -> ExperimentContext | None:
     for c in reversed_iter_contexts():
         if isinstance(c, ExperimentContext):
             return c
+    return None

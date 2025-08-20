@@ -20,14 +20,12 @@ class DeviceTraits:
     str_value: str
     sampling_rate: float
     min_play_wave: int
-    max_play_zero_hold: int
     sample_multiple: int
     port_delay_granularity: int  # Granularity of the port delay in samples
     supports_zsync: bool
     supports_reset_osc_phase: bool
     supports_binary_waves: bool
     supports_complex_waves: bool
-    supports_digital_iq_modulation: bool
     supports_precompensation: bool
     channels_per_awg: int
     is_qa_device: bool
@@ -40,13 +38,12 @@ class DeviceTraits:
     lo_frequency_granularity: Optional[float] = None
     min_lo_frequency: Optional[float] = None
     max_lo_frequency: Optional[float] = None
+    ct_schema_version: str = "Undefined"
     max_ct_entries: Optional[int] = None
     integration_dsp_latency: Optional[float] = None
     spectroscopy_dsp_latency: Optional[float] = None
     has_prng: bool = False
     supports_output_mute: bool = False
-    output_mute_engage_delay: float | None = None
-    output_mute_disengage_delay: float | None = None
     device_class: int = 0x0
 
 
@@ -71,7 +68,6 @@ class DeviceType(DeviceTraits, Enum):
         sampling_rate=2.4e9,
         sampling_rate_2GHz=2.0e9,
         min_play_wave=32,
-        max_play_zero_hold=(1 << 19) - 16,
         sample_multiple=16,
         port_delay_granularity=1,
         amplitude_register_count=4,
@@ -79,7 +75,6 @@ class DeviceType(DeviceTraits, Enum):
         supports_reset_osc_phase=True,
         supports_binary_waves=True,
         supports_complex_waves=False,
-        supports_digital_iq_modulation=True,
         supports_precompensation=True,
         channels_per_awg=2,
         # @2.4GHz, device grid of 16 samples
@@ -92,7 +87,7 @@ class DeviceType(DeviceTraits, Enum):
         # Verified by PW (2022-10-13) on dev8047, proc. FPGA 68603. Observed ~77 ns.
         reset_osc_duration=80e-9,
         supports_oscillator_switching=False,
-        # Schema v.1.1.0
+        ct_schema_version="hd_1.1.0",
         max_ct_entries=1024,
         is_qa_device=False,
         has_prng=True,
@@ -103,14 +98,12 @@ class DeviceType(DeviceTraits, Enum):
         str_value="uhfqa",
         sampling_rate=1.8e9,
         min_play_wave=16,
-        max_play_zero_hold=131056,
         sample_multiple=8,
         port_delay_granularity=4,
         supports_zsync=False,
         supports_reset_osc_phase=True,
         supports_binary_waves=True,  # Todo (Pol): useful or not?
         supports_complex_waves=False,
-        supports_digital_iq_modulation=False,
         supports_precompensation=False,
         channels_per_awg=2,
         num_integration_units_per_acquire_signal=2,
@@ -133,14 +126,12 @@ class DeviceType(DeviceTraits, Enum):
         # min_play_wave=4,
         # sample_multiple=4,
         min_play_wave=32,
-        max_play_zero_hold=(1 << 19) - 16,
         sample_multiple=16,
         port_delay_granularity=4,
         supports_zsync=True,
         supports_reset_osc_phase=True,  # Todo (Pol): useful or not?
         supports_binary_waves=False,
         supports_complex_waves=True,
-        supports_digital_iq_modulation=False,
         supports_precompensation=False,
         channels_per_awg=1,
         num_integration_units_per_acquire_signal=1,
@@ -156,25 +147,17 @@ class DeviceType(DeviceTraits, Enum):
         spectroscopy_dsp_latency=220e-9,
         device_class=0x0,
         supports_output_mute=True,
-        # Verified by MH (2024-03-16) on dev12156 & dev12093, rev 69800.
-        # Marker output setTrigger(1) lead time
-        output_mute_engage_delay=128e-9,
-        # Verified by MH (2024-03-16) on dev12156 & dev12093 rev 69800.
-        # Marker output setTrigger(0) delay time
-        output_mute_disengage_delay=-16e-9,
     )
     SHFSG = DeviceTraits(
         str_value="shfsg",
         sampling_rate=2.0e9,
         min_play_wave=32,
-        max_play_zero_hold=(1 << 19) - 16,
         sample_multiple=16,
         port_delay_granularity=1,
         supports_zsync=True,
         supports_reset_osc_phase=True,
         supports_binary_waves=True,
         supports_complex_waves=False,
-        supports_digital_iq_modulation=True,
         supports_precompensation=False,
         channels_per_awg=1,
         oscillator_set_latency=88e-9,
@@ -185,30 +168,23 @@ class DeviceType(DeviceTraits, Enum):
         supports_oscillator_switching=True,
         min_lo_frequency=1e9,
         max_lo_frequency=8.5e9,
-        # Schema v.1.2.0
+        ct_schema_version="sg_1.2.0",
         max_ct_entries=4096,
         is_qa_device=False,
         has_prng=True,
         supports_output_mute=True,
-        # Verified by MH (2024-03-16) on dev12156 & dev12093, rev 69800.
-        # PW (2024-07-02) bump by 26 ns, account for possible RTR delay
-        output_mute_engage_delay=24e-9 + 26e-9,
-        # Verified by MH (2024-03-16) on dev12156 & dev12093 rev 69800.
-        output_mute_disengage_delay=-100e-9,
         device_class=0x0,
     )
     PRETTYPRINTERDEVICE = DeviceTraits(
         str_value="prettyprinterdevice",
         sampling_rate=2.0e9,
         min_play_wave=4,
-        max_play_zero_hold=0,
         sample_multiple=4,
         port_delay_granularity=-(1 << 32),  # FIXME: Unknown or NA
         supports_zsync=False,
         supports_reset_osc_phase=True,
         supports_binary_waves=False,
         supports_complex_waves=False,
-        supports_digital_iq_modulation=False,
         supports_precompensation=False,
         channels_per_awg=1,
         is_qa_device=False,

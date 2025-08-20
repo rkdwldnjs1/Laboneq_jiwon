@@ -1,7 +1,7 @@
 # Copyright 2022 Zurich Instruments AG
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import dataclass
+import attrs
 
 from laboneq.core.types.enums.io_direction import IODirection
 from laboneq.core.utilities.dsl_dataclass_decorator import classformatter
@@ -12,7 +12,7 @@ from .zi_standard_instrument import ZIStandardInstrument
 
 
 @classformatter
-@dataclass(init=True, repr=True, order=True)
+@attrs.define
 class SHFSG(ZIStandardInstrument):
     """Class representing a ZI SHFSG instrument."""
 
@@ -47,7 +47,7 @@ class SHFSG(ZIStandardInstrument):
                     uid=f"SGCHANNELS/{ch}/OUTPUT",
                     signal_type=IOSignalType.IQ,
                     physical_port_ids=[f"{ch}"],
-                    connector_labels=[f"Signal Output {ch+1}"],
+                    connector_labels=[f"Signal Output {ch + 1}"],
                 )
                 for ch in range(8)
             ]

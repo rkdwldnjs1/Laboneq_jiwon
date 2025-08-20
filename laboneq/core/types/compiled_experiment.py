@@ -24,10 +24,10 @@ class CompiledExperiment:
     """Data structure to store the output of the compiler.
 
     Attributes:
-        device_setup (DeviceSetup):
-            The device setup the experiment was compiled for.
-        experiment (Experiment):
-            The (uncompiled) experiment.
+        device_setup (DeviceSetup) (deprecated):
+            Deprecated. The device setup the experiment was compiled for.
+        experiment (Experiment) (deprecated):
+            Deprecated. The (uncompiled) experiment.
         experiment_dict (deprecated):
             Deprecated. A representation of the source experiment, using
             primitive Python datatypes only (dicts, lists, etc).
@@ -36,6 +36,19 @@ class CompiledExperiment:
             Internal. The internal representation of the compiled
             experiment. Available for debugging but subject to
             change in any LabOne Q release.
+
+    !!! version-changed "Changed in version 2.54.0"
+        The following deprecated methods for saving and loading were removed:
+        - `load`
+        - `save`
+
+        Use the `load` and `save` functions from the `laboneq.simple` module instead.
+
+    !!! version-changed "Deprecated in version 2.51.0"
+        The `.device_setup` and `.experiment` attributes were
+        deprecated in version 2.51.0 and will be removed in a
+        future release. Manage and track the device setup and experiment
+        separately if they are needed.
 
     !!! version-changed "Deprecated in version 2.14.0"
         The `.experiment_dict` attribute was deprecated in
@@ -220,24 +233,3 @@ class CompiledExperiment:
         )
 
         replace_phase_increment(self, parameter, new_value)
-
-    @classmethod
-    def load(cls, filename: str) -> CompiledExperiment:
-        """Load a compiled experiment from a JSON file.
-
-        Args:
-            filename: The file to load the compiled experiment from.
-        """
-        from laboneq.dsl.serialization import Serializer
-
-        return Serializer.from_json_file(filename, cls)
-
-    def save(self, filename: str):
-        """Store a compiled experiment in a JSON file.
-
-        Args:
-            filename: The file to save the compiled experiment to.
-        """
-        from laboneq.dsl.serialization import Serializer
-
-        Serializer.to_json_file(self, filename)

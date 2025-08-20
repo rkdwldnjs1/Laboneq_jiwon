@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import typing
 
+import numpy as np
+
 from laboneq.compiler import DeviceType
 from laboneq.core.exceptions import LabOneQException
 from laboneq.core.types.enums import ExecutionType
@@ -58,6 +60,17 @@ def check_triggers_and_markers(dao: ExperimentDAO):
                         f" {trigger['signal_id']} not present in experiment."
                         f" Available signal(s) are {', '.join(dao.signals())}."
                     )
+        for trigger_data in section_info.triggers:
+            signal_info = dao.signal_info(trigger_data["signal_id"])
+            if (
+                signal_info.device.device_type == DeviceType.HDAWG
+                and len(signal_info.channels) == 1
+                and trigger_data["state"] > 1
+            ):
+                raise LabOneQException(
+                    f"Invalid trigger value in section '{section_id}' on RF signal"
+                    f" {signal_info.uid}: {trigger_data['state']}"
+                )
         for signal_id in dao.section_signals(section_id):
             for section_pulse in dao.section_pulses(section_id, signal_id):
                 if section_pulse.pulse is None:
@@ -213,7 +226,7 @@ def check_lo_frequency(dao: ExperimentDAO):
         for f in values:
             if abs(f % 200e6) > 1e-6:
                 raise LabOneQException(
-                    f"Cannot set local oscillator of signal {signal} to {f/1e9:.3} GHz."
+                    f"Cannot set local oscillator of signal {signal} to {f / 1e9:.3} GHz."
                     f" Only integer multiples of 200 MHz are accepted."
                 )
 
@@ -236,6 +249,34 @@ def freq_sweep_on_acquire_line_requires_spectroscopy_mode(dao: ExperimentDAO):
             )
 
 
+def check_phase_on_rf_signal_support(dao: ExperimentDAO):
+    for section_id in dao.sections():
+        for signal_id in dao.section_signals(section_id):
+            signal = dao.signal_info(signal_id)
+            device = signal.device
+            if device.device_type == DeviceInfoType.PRETTYPRINTERDEVICE:
+                continue
+
+            if (
+                signal.oscillator is not None and not signal.oscillator.is_hardware
+            ) or signal.type != SignalInfoType.RF:
+                continue
+
+            for ssp in dao.section_pulses(section_id, signal_id):
+                if ssp.phase is not None or (
+                    ssp.amplitude is not None
+                    and (
+                        isinstance(ssp.amplitude, ParameterInfo)
+                        and not np.all(np.isreal(ssp.amplitude.values))
+                    )
+                    or not np.isreal(ssp.amplitude)
+                ):
+                    raise LabOneQException(
+                        f"In section '{section_id}', signal '{signal_id}':"
+                        " baseband phase modulation not possible for RF signal with HW oscillator"
+                    )
+
+
 def check_phase_increments_support(dao: ExperimentDAO):
     for section_id in dao.sections():
         for signal_id in dao.section_signals(section_id):
@@ -243,13 +284,17 @@ def check_phase_increments_support(dao: ExperimentDAO):
             device = signal.device
             if device.device_type == DeviceInfoType.PRETTYPRINTERDEVICE:
                 continue
+
+            if (
+                signal.oscillator is not None and not signal.oscillator.is_hardware
+            ) or signal.type == SignalInfoType.IQ:
+                continue
+
             for ssp in dao.section_pulses(section_id, signal_id):
-                if ssp.increment_oscillator_phase is None:
-                    continue
-                if signal.type != SignalInfoType.IQ:
+                if ssp.increment_oscillator_phase is not None:
                     raise LabOneQException(
                         f"In section '{section_id}', signal '{signal_id}':"
-                        " phase increments are only supported on IQ signals"
+                        " phase increments are only supported on IQ signals, or on RF signals with SW modulation"
                     )
 
 
@@ -284,7 +329,7 @@ def check_no_play_on_acquire_line(dao: ExperimentDAO):
                     )
 
 
-def check_arbirary_marker_is_valid(dao: ExperimentDAO):
+def check_arbitrary_marker_is_valid(dao: ExperimentDAO):
     for section_id in dao.sections():
         for signal_id in dao.section_signals(section_id):
             for section_pulse in dao.section_pulses(section_id, signal_id):

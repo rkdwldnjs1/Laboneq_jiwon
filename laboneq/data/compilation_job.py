@@ -94,25 +94,53 @@ class ParameterInfo:
 
 
 @dataclass
-class FollowerInfo:
-    device: DeviceInfo
-    port: int
-
-
-@dataclass
 class DeviceInfo:
-    uid: str = None
-    device_type: DeviceInfoType = None
+    uid: str
+    device_type: DeviceInfoType
+    dev_type: str | None = None
+    dev_opts: list[str] = field(default_factory=list)
     reference_clock_source: ReferenceClockSourceInfo | None = None
     is_qc: bool | None = None
-    followers: list[FollowerInfo] = field(default_factory=list)
+    followers: list[str] = field(default_factory=list)
+
+    @property
+    def seqc_dev_type(self) -> str:
+        # TODO(2K): This is a workaround, as options string is still not
+        # enforced in the device setup.
+        if self.dev_type is not None:
+            return self.dev_type
+        if self.device_type == DeviceInfoType.UHFQA:
+            dev_type = "UHFQA"
+        elif self.device_type == DeviceInfoType.HDAWG:
+            dev_type = "HDAWG8"
+        elif self.is_qc:
+            dev_type = "SHFQC"
+        elif self.device_type == DeviceInfoType.SHFQA:
+            dev_type = "SHFQA2"
+        elif self.device_type == DeviceInfoType.SHFSG:
+            dev_type = "SHFSG8"
+        else:
+            # TODO(2K): We should never reach this point
+            raise AssertionError(
+                "Internal error: Unexpected device type for SeqC compilation."
+            )
+        # TODO(2K): Add warning for missing options in the device setup
+        return dev_type
+
+    @property
+    def seqc_dev_opts(self) -> list[str]:
+        # TODO(2K): This is a workaround, as options string is still not
+        # enforced in the device setup.
+        if self.dev_type is None and self.is_qc:
+            return ["QC6CH"]
+        return self.dev_opts
 
 
 @dataclass
 class OscillatorInfo:
-    uid: str = None
-    frequency: float | ParameterInfo = None
-    is_hardware: bool = None
+    uid: str
+    frequency: float | ParameterInfo | None = None
+    is_hardware: bool | None = None
 
 
 @dataclass()
@@ -128,7 +156,7 @@ class PulseDef:
     # auto generated __eq__ fails to compare array-likes correctly
     def __eq__(self, other: object) -> bool:
         if isinstance(other, PulseDef):
-            if self.samples is None != other.samples is None:
+            if (self.samples is None) != (other.samples is None):
                 return False
             samples_equal = (
                 self.samples is None and other.samples is None
@@ -194,7 +222,7 @@ class SectionInfo:
     prng_sample: str | None = None
 
     count: int | None = None  # 'None' means 'not a loop'
-    chunk_count: int = 1
+    chunked: bool = False
     execution_type: ExecutionType | None = None
     averaging_mode: AveragingMode | None = None
     repetition_mode: RepetitionMode | None = None
@@ -252,7 +280,7 @@ class PrecompensationInfo:
     computed_delay_samples: int | None = None
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class SignalRange:
     value: float
     unit: str | None
@@ -285,7 +313,7 @@ class SignalInfo:
     channels: list[int] = field(default_factory=list)
     channel_to_port: dict[str, str] = field(default_factory=dict)
     type: SignalInfoType = None
-    voltage_offset: float | None = None
+    voltage_offset: float | ParameterInfo | None = None
     mixer_calibration: MixerCalibrationInfo | None = None
     precompensation: PrecompensationInfo | None = None
     lo_frequency: float | ParameterInfo | None = None
@@ -336,12 +364,21 @@ class Marker:
 
 @dataclass
 class ExperimentInfo:
-    uid: str = None
-    devices: list[DeviceInfo] = field(default_factory=list)
-    signals: list[SignalInfo] = field(default_factory=list)
-    sections: list[SectionInfo] = field(default_factory=list)
-    global_leader_device: DeviceInfo | None = None  # todo: remove
-    pulse_defs: list[PulseDef] = field(default_factory=list)
+    uid: str
+    device_setup_fingerprint: str
+    devices: list[DeviceInfo]
+    signals: list[SignalInfo]
+    sections: list[SectionInfo]
+    global_leader_device: DeviceInfo | None  # todo: remove
+    pulse_defs: list[PulseDef]
+    chunking: ChunkingInfo | None
+
+
+@dataclass
+class ChunkingInfo:
+    auto: bool
+    chunk_count: int
+    sweep_iterations: int
 
 
 @dataclass

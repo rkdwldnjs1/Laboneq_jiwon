@@ -7,6 +7,7 @@ import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
+from laboneq.executor.executor import Statement
 import numpy as np
 from numpy import typing as npt
 
@@ -110,8 +111,8 @@ class CodegenWaveform:
 
 @dataclass
 class ArtifactsCodegen(CompilerArtifact):
-    # The SeqC source code, per device.
-    src: list[dict[str, str]] | None = None
+    # The SeqC program, per device.
+    src: list[dict[str, str | bytes]] | None = None
 
     # The waveforms that will be uploaded to the devices.
     waves: dict[str, CodegenWaveform] = field(default_factory=dict)
@@ -143,19 +144,33 @@ class ArtifactsCodegen(CompilerArtifact):
 class ScheduledExperiment:
     uid: str | None = None
 
+    device_setup_fingerprint: str | None = None
+
     #: Instructions to the controller for running the experiment.
     recipe: Recipe | None = None
 
     #: Compiler artifacts specific to backend(s)
-    artifacts: CompilerArtifact | dict[int, CompilerArtifact] | None = None
+    artifacts: CompilerArtifact | None = None
+
+    #: list of events as scheduled by the compiler.
+    schedule: dict[str, Any] | None = None
+
+    #: Experiment execution model
+    execution: Statement | None = None
+
+    chunk_count: int | None = None
+
+    compilation_job_hash: str | None = None
+    experiment_hash: str | None = None
 
     def __getattr__(self, attr):
         return getattr(self.artifacts, attr)  # @IgnoreException
 
     def __copy__(self):
         new_artifacts = copy.copy(self.artifacts)
-        new_scheduled_experiment = self.__class__(
+        new_scheduled_experiment = ScheduledExperiment(
             uid=self.uid,
+            device_setup_fingerprint=self.device_setup_fingerprint,
             artifacts=new_artifacts,
             schedule=self.schedule,
             execution=self.execution,
@@ -163,15 +178,6 @@ class ScheduledExperiment:
             experiment_hash=self.experiment_hash,
         )
         return new_scheduled_experiment
-
-    #: list of events as scheduled by the compiler.
-    schedule: dict[str, Any] | None = None
-
-    #: Experiment execution model
-    execution: Any = None  # TODO(2K): 'Statement' type after refactoring
-
-    compilation_job_hash: str | None = None
-    experiment_hash: str | None = None
 
     def __eq__(self, other):
         if other is self:
@@ -185,12 +191,14 @@ class ScheduledExperiment:
 
         return (
             other.uid,
+            other.device_setup_fingerprint,
             other.artifacts,
             other.compilation_job_hash,
             other.experiment_hash,
         ) == (
             self.uid,
-            other.artifacts,
+            self.device_setup_fingerprint,
+            self.artifacts,
             self.compilation_job_hash,
             self.experiment_hash,
         ) and dicts_equal(

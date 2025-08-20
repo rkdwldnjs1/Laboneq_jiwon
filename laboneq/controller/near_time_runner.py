@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
-from collections import defaultdict
 
 import logging
 import traceback
@@ -10,10 +9,6 @@ from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING, Any
 
 
-from laboneq.controller.communication import (
-    DaqNodeSetAction,
-    batch_set,
-)
 from laboneq.controller.devices.device_utils import NodeCollector
 from laboneq.controller.protected_session import ProtectedSession
 from laboneq.controller.util import LabOneQControllerException, SweepParamsTracker
@@ -26,7 +21,6 @@ from laboneq.executor.executor import AsyncExecutorBase, LoopFlags, LoopingMode
 if TYPE_CHECKING:
     from laboneq.core.types.numpy_support import NumPyArray
     from laboneq.controller.controller import Controller
-    from laboneq.controller.devices.device_zi import DeviceZI
 
 _logger = logging.getLogger(__name__)
 
@@ -36,17 +30,15 @@ class NearTimeRunner(AsyncExecutorBase):
         super().__init__(looping_mode=LoopingMode.NEAR_TIME_ONLY)
         self.controller = controller
         self.protected_session = protected_session
-        self.user_set_nodes: dict[DeviceZI, NodeCollector] = defaultdict(NodeCollector)
+        self.user_set_nodes = NodeCollector()
         self.nt_loop_indices: list[int] = []
-        self.pipeliner_job: int = 0
         self.sweep_params_tracker = SweepParamsTracker()
 
     def nt_step(self) -> NtStepKey:
         return NtStepKey(indices=tuple(self.nt_loop_indices))
 
     async def set_handler(self, path: str, value):
-        dev = self.controller._find_by_node_path(path)
-        self.user_set_nodes[dev].add(path, value, cache=False)
+        self.user_set_nodes.add(path, value, cache=False)
 
     async def nt_callback_handler(self, func_name: str, args: dict[str, Any]):
         func = self.controller._neartime_callbacks.get(func_name)
@@ -80,17 +72,11 @@ class NearTimeRunner(AsyncExecutorBase):
     async def for_loop_entry_handler(
         self, count: int, index: int, loop_flags: LoopFlags
     ):
-        if loop_flags.is_pipeline:
-            # Don't add the pipeliner loop index to NT indices
-            self.pipeliner_job = index
-            return
         self.nt_loop_indices.append(index)
 
     async def for_loop_exit_handler(
         self, count: int, index: int, loop_flags: LoopFlags
     ):
-        if loop_flags.is_pipeline:
-            return
         self.nt_loop_indices.pop()
 
     async def rt_entry_handler(
@@ -100,42 +86,22 @@ class NearTimeRunner(AsyncExecutorBase):
         averaging_mode: AveragingMode,
         acquisition_type: AcquisitionType,
     ):
-        if self.pipeliner_job > 0:
-            # Skip the pipeliner loop iterations, except the first one - iterated by the pipeliner itself
-            return
-
-        await self.controller._configure_triggers()
-
-        user_set_node_actions: list[DaqNodeSetAction] = []
-        for device, nc in self.user_set_nodes.items():
-            user_set_node_actions.extend(await device.maybe_async(nc))
-        self.user_set_nodes.clear()
-
-        nt_sweep_nodes = await self.controller._prepare_nt_step(
-            self.sweep_params_tracker
+        await self.controller._prepare_nt_step(
+            sweep_params_tracker=self.sweep_params_tracker,
+            user_set_nodes=self.user_set_nodes,
+            nt_step=self.nt_step(),
         )
-
-        step_prepare_nodes = await self.controller._prepare_rt_execution()
-
-        await batch_set([*user_set_node_actions, *nt_sweep_nodes, *step_prepare_nodes])
         self.sweep_params_tracker.clear_for_next_step()
-
-        await self.controller._initialize_awgs(
-            nt_step=self.nt_step(), rt_section_uid=uid
-        )
+        self.user_set_nodes = NodeCollector()
 
         try:
-            await self.controller._execute_one_step(
-                acquisition_type, rt_section_uid=uid
-            )
-            await self.controller._read_one_step_results(
-                nt_step=self.nt_step(), rt_section_uid=uid
-            )
+            await self.controller._execute_one_step()
+            await self.controller._read_one_step_results(nt_step=self.nt_step())
         except LabOneQControllerException:
             # TODO(2K): introduce "hard" controller exceptions
             self.controller._report_step_error(
                 nt_step=self.nt_step(),
-                rt_section_uid=uid,
+                uid=uid,
                 message=traceback.format_exc(),
             )
 

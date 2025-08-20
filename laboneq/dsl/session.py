@@ -3,21 +3,20 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, Dict, Union
 
 from numpy import typing as npt
+from typing_extensions import deprecated
 
 from laboneq.controller.protected_session import ProtectedSession
-from laboneq.controller.toolkit_adapter import MockedToolkit, ToolkitDevices
+from laboneq.controller.toolkit_adapter import ToolkitDevices
 from laboneq.core.exceptions import AbortExecution, LabOneQException
 from laboneq.core.types import CompiledExperiment
 from laboneq.core.utilities.environment import is_testing
 from laboneq.core.utilities.laboneq_compile import laboneq_compile
-from laboneq.dsl.calibration import Calibration
 from laboneq.dsl.device import DeviceSetup
 from laboneq.dsl.device.io_units.logical_signal import (
     LogicalSignalRef,
@@ -25,7 +24,6 @@ from laboneq.dsl.device.io_units.logical_signal import (
 )
 from laboneq.dsl.experiment import Experiment
 from laboneq.dsl.result import Results
-from laboneq.dsl.serialization import Serializer
 from laboneq.implementation.legacy_adapters.converters_target_setup import (
     convert_dsl_to_target_setup,
 )
@@ -87,12 +85,14 @@ class Session:
     def __init__(
         self,
         device_setup: DeviceSetup | None = None,
-        log_level: int = None,
+        log_level: int | str | None = None,
         performance_log: bool = False,
         configure_logging: bool = True,
         _last_results=None,
         compiled_experiment: CompiledExperiment | None = None,
         experiment: Experiment | None = None,
+        include_results_metadata: bool = True,
+        server_log: bool = False,
     ):
         """Constructor of the session.
 
@@ -112,6 +112,35 @@ class Session:
                 If specified, set the current compiled experiment.
             experiment:
                 If specified, set the current experiment.
+            include_results_metadata:
+                If True, `Session.run` will return a `Results` object with the deprecated `.experiment`,
+                `.compiled_experiment` and `.device_setup` attributes populated. Otherwise, it will
+                return a `Results` object with these attributes not populated.
+            server_log:
+                If `True`, the data server log - including device firmware logs - will be forwarded to the LabOneQ
+                log under the logger named `server.log.<server_uid>`. Additionally, it will be written to the file
+                `server.log` alongside the regular LabOneQ log, assuming the standard logging configuration is used.
+        !!! version-changed "Changed in version 2.54.0"
+            The following deprecated methods for saving and loading were removed:
+                - `load`
+                - `save`
+                - `save_signal_map`
+                - `load_signal_map`
+                - `save_results`
+                - `save_experiment`
+                - `load_experiment`
+                - `save_device_setup`
+                - `load_device_setup`
+                - `save_device_calibration`
+                - `load_device_calibration`
+                - `save_compiled_experiment`
+                - `load_compiled_experiment`
+                - `save_experiment_calibration`
+                - `load_experiment_calibration`
+            Use the `load` and `save` functions from the `laboneq.simple` module instead.
+
+        !!! version-added "Added in version 2.52.0"
+            Added the `include_results_metadata` argument.
 
         !!! version-changed "Changed in version 2.0"
             - Removed `pass_v3_to_compiler` argument.
@@ -123,11 +152,16 @@ class Session:
         self._experiment_definition = experiment
         self._compiled_experiment = compiled_experiment
         self._last_results = _last_results
+        self._include_results_metadata = include_results_metadata
         if configure_logging:
             if not is_testing():
                 # Only initialize logging outside pytest
                 # pytest initializes the logging itself
-                initialize_logging(log_level=log_level, performance_log=performance_log)
+                initialize_logging(
+                    log_level=log_level,
+                    performance_log=performance_log,
+                    server_log=server_log,
+                )
             self._logger = logging.getLogger("laboneq")
         else:
             self._logger = logging.getLogger("null")
@@ -188,6 +222,11 @@ class Session:
             name = func.__name__
         self._neartime_callbacks[name] = func
 
+    @deprecated(
+        "The 'register_user_function' method is deprecated."
+        " Use 'register_neartime_callback' instead.",
+        category=FutureWarning,
+    )
     def register_user_function(self, func, name: str | None = None):
         """Registers a near-time callback to be referred from the experiment's `call` operation.
 
@@ -200,11 +239,6 @@ class Session:
             The `register_user_function` method was deprecated in version 2.19.0.
             Use `register_neartime_callback` instead.
         """
-        warnings.warn(
-            "The 'register_user_function' method is deprecated. Use 'register_neartime_callback' instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
         self.register_neartime_callback(func, name)
 
     def connect(
@@ -253,6 +287,15 @@ class Session:
             connection_state:
                 The connection state of the session.
         """
+        if use_async_api is not None:
+            warnings.warn(
+                "The 'use_async_api' argument currently has no effect and "
+                "will be removed in version 2.53.0. Please adjust your code to not supply this "
+                "argument.",
+                FutureWarning,
+                stacklevel=2,
+            )
+
         self._ignore_version_mismatch = ignore_version_mismatch
         if (
             self._connection_state.connected
@@ -270,13 +313,12 @@ class Session:
         controller.connect(
             do_emulation=self._connection_state.emulated,
             reset_devices=reset_devices,
-            use_async_api=use_async_api,
             disable_runtime_checks=disable_runtime_checks,
             timeout_s=timeout,
         )
         self._controller = controller
         if self._connection_state.emulated:
-            self._toolkit_devices = MockedToolkit()
+            self._toolkit_devices = ToolkitDevices()
         else:
             self._toolkit_devices = ToolkitDevices(controller.devices)
         self._connection_state.connected = True
@@ -386,6 +428,7 @@ class Session:
     def run(
         self,
         experiment: Union[Experiment, CompiledExperiment] | None = None,
+        include_results_metadata: bool | None = None,
     ) -> Results:
         """Executes the compiled experiment.
 
@@ -404,14 +447,30 @@ class Session:
                 run. The experiment will be compiled if it has not been yet. If no
                 experiment is specified the previously assigned and compiled experiment
                 is used.
+            include_results_metadata:
+                If true, return a `Results` object with the deprecated `.experiment`,
+                `.compiled_experiment` and `.device_setup` attributes populated.
+                If false, return a `Results` object with these attributes not populated.
+                If None, the setting falls back to that passed to `include_results_metadata`
+                when this session was created.
 
         Returns:
             results:
                 A `Results` object.
 
+        !!! version-changed "Changed in version 2.52.0"
+            Replaced the `include_metadata` argument with `include_results_metadata`.
+
+        !!! version-changed "Changed in version 2.51.0"
+            Added the `include_metadata` argument to control whether to include experiment and
+            device setup in the results.
+
         !!! version-changed "Changed in version 2.4"
             Raises error if session is not connected.
         """
+        if include_results_metadata is None:
+            include_results_metadata = self._include_results_metadata
+
         controller = self._assert_connected()
         if experiment:
             if isinstance(experiment, CompiledExperiment):
@@ -420,27 +479,25 @@ class Session:
                 self.compile(experiment)
         if self.compiled_experiment is None:
             raise LabOneQException("No experiment available to run.")
-        self._last_results = Results(
-            experiment=self.experiment,
-            device_setup=self.device_setup,
-            compiled_experiment=self.compiled_experiment,
-            acquired_results={},
-            neartime_callback_results={},
-            execution_errors=[],
-        )
+
+        self._last_results = None
         try:
             controller.execute_compiled(
                 self.compiled_experiment.scheduled_experiment, ProtectedSession(self)
             )
         finally:
             results = controller.results()
-            self._last_results.acquired_results = results.acquired_results
-            self._last_results.neartime_callback_results = (
-                results.neartime_callback_results
-            )
-            self._last_results.execution_errors = results.execution_errors
-            self._last_results.pipeline_jobs_timestamps = (
-                results.pipeline_jobs_timestamps
+            results_kwargs: dict[str, Any] = {}
+            if include_results_metadata:
+                results_kwargs["experiment"] = self.compiled_experiment.experiment
+                results_kwargs["device_setup"] = self.device_setup
+                results_kwargs["compiled_experiment"] = self.compiled_experiment
+            self._last_results = Results(
+                acquired_results=results.acquired_results,
+                neartime_callback_results=results.neartime_callback_results,
+                execution_errors=results.execution_errors,
+                pipeline_jobs_timestamps=results.pipeline_jobs_timestamps,
+                **results_kwargs,
             )
 
         return self.results
@@ -642,193 +699,6 @@ class Session:
             "experiment": Experiment,
             "_last_results": Results,
         }
-
-    @staticmethod
-    def load(filename: str) -> Session:
-        """Loads the session from a serialized file.
-        A restored session from a loaded file will end up in the same state of the session that saved the file in the first place.
-
-        Args:
-            filename: Filename (full path) of the file that should be loaded into the session.
-
-        Returns:
-            session:
-                A new session loaded from the file.
-        """
-
-        import json
-
-        with open(filename, mode="r") as file:
-            session_dict = json.load(file)
-        constructor_args = {}
-
-        for field, field_type in Session._session_fields().items():
-            _logger.info("Loading %s of type %s", field, field_type)
-            constructor_args[field] = Serializer.load(session_dict[field], field_type)
-
-        return Session(**constructor_args)
-
-    def save(self, filename: str):
-        """Stores the session from a serialized file.
-        A restored session from a loaded file will end up in the same state of the session that saved the file in the first place.
-
-        Args:
-            filename: Filename (full path) of the file where the session should be stored in.
-        """
-        # TODO ErC: Error handling
-
-        serialized_dict = {}
-        for field in Session._session_fields().keys():
-            serialized_dict[field] = Serializer.to_dict(getattr(self, field))
-
-        json_string = json.dumps(serialized_dict)
-        try:
-            with open(filename, mode="w") as file:
-                file.write(json_string)
-        except IOError as e:
-            raise LabOneQException() from e
-
-    def load_device_setup(self, filename: str):
-        """Loads a device setup from a given file into the session.
-
-        Args:
-            filename: Filename (full path) of the setup should be loaded into the session.
-        """
-        self._device_setup = DeviceSetup.load(filename)
-
-    def save_device_setup(self, filename: str):
-        """Saves the device setup from the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the setup should be stored in.
-        """
-        if self._device_setup is None:
-            self.logger.info("No device setup set in this session.")
-        else:
-            self._device_setup.save(filename)
-
-    def load_device_calibration(self, filename: str):
-        """Loads a device calibration from a given file into the session.
-
-        Args:
-            filename: Filename (full path) of the calibration should be loaded into the session.
-        """
-        calibration = Calibration.load(filename)
-        self._device_setup.set_calibration(calibration)
-
-    def save_device_calibration(self, filename: str):
-        """Saves the device calibration from the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the calibration should be stored in.
-        """
-        if self._device_setup is None:
-            self.logger.info("No device setup set in this session.")
-        else:
-            calibration = self._device_setup.get_calibration()
-            calibration.save(filename)
-
-    def load_experiment(self, filename: str):
-        """Loads an experiment from a given file into the session.
-
-        Args:
-            filename: Filename (full path) of the experiment should be loaded into the session.
-        """
-        self._experiment_definition = Experiment.load(filename)
-
-    def save_experiment(self, filename: str):
-        """Saves the experiment from the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the experiment should be stored in.
-        """
-        if self._experiment_definition is None:
-            self.logger.info(
-                "No experiment set in this session. Execute run() or compile() in order to set an experiment in this session."
-            )
-        else:
-            self._experiment_definition.save(filename)
-
-    def load_compiled_experiment(self, filename: str):
-        """Loads a compiled experiment from a given file into the session.
-
-        Args:
-            filename:
-                Filename (full path) of the experiment should be loaded
-                into the session.
-        """
-
-        self._compiled_experiment = CompiledExperiment.load(filename)
-
-    def save_compiled_experiment(self, filename: str):
-        """Saves the compiled experiment from the session into a given file.
-
-        Args:
-            filename:
-                Filename (full path) of the file where the experiment
-                should be stored in.
-        """
-        if self._compiled_experiment is None:
-            self.logger.info(
-                "No compiled experiment set in this session. Execute run() or compile() "
-                "in order to compile an experiment."
-            )
-        else:
-            self._compiled_experiment.save(filename)
-
-    def load_experiment_calibration(self, filename: str):
-        """Loads a experiment calibration from a given file into the session.
-
-        Args:
-            filename: Filename (full path) of the calibration should be loaded into the session.
-        """
-        calibration = Calibration.load(filename)
-        self._experiment_definition.set_calibration(calibration)
-
-    def save_experiment_calibration(self, filename: str):
-        """Saves the experiment calibration from the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the calibration should be stored in.
-        """
-        if self._experiment_definition is None:
-            self.logger.info("No experiment set in this session.")
-        else:
-            calibration = self._experiment_definition.get_calibration()
-            calibration.save(filename)
-
-    def load_signal_map(self, filename: str):
-        """Loads a signal map from a given file and sets it to the experiment in the session.
-
-        Args:
-            filename: Filename (full path) of the mapping that should be loaded into the session.
-        """
-        self._experiment_definition.load_signal_map(filename)
-
-    def save_signal_map(self, filename: str):
-        """Saves the signal mapping from experiment in the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the mapping should be stored in.
-        """
-        if self._experiment_definition is None:
-            self.logger.info("No experiment set in this session.")
-        else:
-            signal_map = self._experiment_definition.get_signal_map()
-            Serializer.to_json_file(signal_map, filename)
-
-    def save_results(self, filename: str):
-        """Saves the result from the session into a given file.
-
-        Args:
-            filename: Filename (full path) of the file where the result should be stored in.
-        """
-        if self._last_results is None:
-            self.logger.info(
-                "No results available in this session. Execute run() or simulate_outputs() in order to generate an experiment's result."
-            )
-        else:
-            self._last_results.save(filename)
 
     def abort_execution(self):
         """Abort the execution of an experiment.

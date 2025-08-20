@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from laboneq.controller.devices.device_leader_base import DeviceLeaderBase
-from laboneq.controller.devices.zi_node_monitor import (
+from laboneq.controller.devices.node_control import (
     Command,
     WaitCondition,
     NodeControlBase,
@@ -15,6 +15,7 @@ class DevicePQSC(DeviceLeaderBase):
         super().__init__(*args, **kwargs)
         self.dev_type = "PQSC"
         self.dev_opts = []
+        self._zsyncs = 18
 
     def load_factory_preset_control_nodes(self) -> list[NodeControlBase]:
         return [

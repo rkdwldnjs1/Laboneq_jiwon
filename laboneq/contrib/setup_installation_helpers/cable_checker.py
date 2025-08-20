@@ -233,9 +233,9 @@ def create_device_setup(
         ):
             j = 1
             for i in range(nprt):
-                assert (
-                    devprops.number_of_channels_per_sg_port == 1
-                ), "So far, only one channel per port is supported"
+                assert devprops.number_of_channels_per_sg_port == 1, (
+                    "So far, only one channel per port is supported"
+                )
                 ls_name = f"{name}_{k}_{j}"
                 port = f"{sgprf}{i}{devprops.sg_suffix}"
                 pulse_list = ["init", "start", "end", "1", "."] if cps else [""]
@@ -284,9 +284,7 @@ def create_device_setup(
             if device.zsync_port is not None:
                 device_type = device.type.upper()
                 name = f"device_{device_type}_{uid}"
-                connections[pqsc_name].append(
-                    {"to": name, "port": f"ZSYNCS/{device.zsync_port}"}
-                )
+                connections[pqsc_name].append({"to": name})
 
     device_setup = DeviceSetup.from_dicts(
         instruments=instruments, connections=connections, dataservers=dataservers

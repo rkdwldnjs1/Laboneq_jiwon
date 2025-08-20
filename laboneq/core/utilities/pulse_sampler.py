@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from numbers import Complex
 from typing import Any, Callable, cast
 
@@ -213,9 +212,6 @@ def sample_pulse(
     if signal_type == "iq":
         samples = np.exp(-1.0j * carrier_phase) * samples
     else:
-        # TODO: CM: seems unneccesary to check here again after the previous check in line 147 -> remove?
-        if not np.allclose(samples.imag, 0.0):
-            raise LabOneQException("Complex samples not permitted for RF signals")
         samples = np.cos(carrier_phase) * samples
 
     if mixer_type == MixerType.UHFQA_ENVELOPE and signal_type == "iq":
@@ -274,33 +270,33 @@ pulse_function_library = _pulse_samplers
 
 
 def verify_amplitude_no_clipping(
-    samples, pulse_id: str | None, mixer_type: MixerType | None, signal_id: str | None
+    samples_i: np.ndarray,
+    samples_q: np.ndarray | None,
+    pulse_id: str | None,
+    mixer_type: MixerType | None,
+    signals: tuple[str] | None,
 ):
-    max_amplitude = np.max(
-        np.abs(samples["samples_i"] + 1j * samples.get("samples_j", 0))
-    )
+    if samples_q is None:
+        samples_q = 0
+    max_amplitude = np.max(np.abs(samples_i + 1j * samples_q))
     if mixer_type == MixerType.UHFQA_ENVELOPE:
         max_amplitude /= np.sqrt(2)
     TOLERANCE = 1e-6
     if max_amplitude > 1 + TOLERANCE:
+        signals_id = "_".join(signals) if signals else ""
         if pulse_id is not None:
             message = (
-                f"Pulse '{pulse_id}' {f'on signal {signal_id} ' if signal_id else ''}"
+                f"Pulse '{pulse_id}' {f'on signal {signals_id} ' if signals_id else ''}"
                 f"exceeds the max allowed amplitude."
             )
         else:
-            message = (
-                f"A waveform on signal '{signal_id}' exceeds the max allowed amplitude."
-            )
+            message = f"A waveform on signal '{signals_id}' exceeds the max allowed amplitude."
 
         message += " Signal will be clipped on the device."
         _logger.warning(message)
 
 
-def combine_pulse_parameters(initial_pulse, replaced_pulse, play):
-    combined_parameters = deepcopy(initial_pulse) or {}
-    if replaced_pulse is not None:
-        combined_parameters.update(replaced_pulse)
-    if play is not None:
-        combined_parameters.update(play)
-    return combined_parameters
+def combine_pulse_parameters(
+    initial_pulse: dict | None, replaced_pulse: dict | None, play: dict | None
+) -> dict:
+    return {**(initial_pulse or {}), **(replaced_pulse or {}), **(play or {})}

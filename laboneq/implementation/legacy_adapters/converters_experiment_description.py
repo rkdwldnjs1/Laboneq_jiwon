@@ -46,8 +46,6 @@ from laboneq.dsl.experiment.experiment_signal import (
 from laboneq.dsl.experiment.play_pulse import PlayPulse as PlayPulseDSL
 from laboneq.dsl.experiment.pulse import PulseFunctional as PulseFunctionalDSL
 from laboneq.dsl.experiment.pulse import PulseSampled as PulseSampledDSL
-from laboneq.dsl.experiment.pulse import PulseSampledReal as PulseSampledRealDSL
-from laboneq.dsl.experiment.pulse import PulseSampledComplex as PulseSampledComplexDSL
 from laboneq.dsl.experiment.reserve import Reserve as ReserveDSL
 from laboneq.dsl.experiment.section import AcquireLoopNt as AcquireLoopNtDSL
 from laboneq.dsl.experiment.section import AcquireLoopRt as AcquireLoopRtDSL
@@ -112,7 +110,7 @@ def convert_Acquire(orig: AcquireDSL):
         orig.pulse_parameters, converter_function_directory
     )
     retval.signal = orig.signal
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_AcquireLoopNt(orig: AcquireLoopNtDSL):
@@ -131,7 +129,7 @@ def convert_AcquireLoopNt(orig: AcquireLoopNtDSL):
     retval.count = orig.count
     retval.execution_type = convert_ExecutionType(orig.execution_type)
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_AcquireLoopRt(orig: AcquireLoopRtDSL):
@@ -154,7 +152,7 @@ def convert_AcquireLoopRt(orig: AcquireLoopRtDSL):
     retval.repetition_time = orig.repetition_time
     retval.reset_oscillator_phase = orig.reset_oscillator_phase
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Call(orig: CallDSL):
@@ -163,7 +161,7 @@ def convert_Call(orig: CallDSL):
     retval = CallDATA()
     retval.args = convert_dynamic(orig.args, converter_function_directory)
     retval.func_name = convert_dynamic(orig.func_name, converter_function_directory)
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Case(orig: CaseDSL):
@@ -180,7 +178,7 @@ def convert_Case(orig: CaseDSL):
     retval.uid = orig.uid
     retval.state = orig.state
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Delay(orig: DelayDSL):
@@ -190,7 +188,7 @@ def convert_Delay(orig: DelayDSL):
     retval.precompensation_clear = orig.precompensation_clear
     retval.signal = orig.signal
     retval.time = convert_dynamic(orig.time, converter_function_directory)
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Experiment(orig: ExperimentDSL):
@@ -214,7 +212,7 @@ def convert_ExperimentSignal(orig: ExperimentSignalDSL):
         return None
     retval = ExperimentSignalDATA()
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_LinearSweepParameter(orig: LinearSweepParameterDSL):
@@ -226,7 +224,7 @@ def convert_LinearSweepParameter(orig: LinearSweepParameterDSL):
     retval.start = orig.start
     retval.stop = orig.stop
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Match(orig: MatchDSL):
@@ -296,7 +294,7 @@ def convert_PulseFunctional(orig: PulseFunctionalDSL):
     )
     retval.uid = orig.uid
     retval.can_compress = orig.can_compress
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_PulseSampled(orig: PulseSampledDSL):
@@ -306,7 +304,7 @@ def convert_PulseSampled(orig: PulseSampledDSL):
     retval.samples = convert_dynamic(orig.samples, converter_function_directory)
     retval.uid = orig.uid
     retval.can_compress = orig.can_compress
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Reserve(orig: ReserveDSL):
@@ -314,7 +312,7 @@ def convert_Reserve(orig: ReserveDSL):
         return None
     retval = ReserveDATA()
     retval.signal = orig.signal
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Section(orig: SectionDSL):
@@ -329,7 +327,7 @@ def convert_Section(orig: SectionDSL):
     retval.play_after = convert_dynamic(orig.play_after, converter_function_directory)
     retval.trigger = convert_dynamic(orig.trigger, converter_function_directory)
     retval.uid = orig.uid
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Set(orig: SetDSL):
@@ -338,7 +336,7 @@ def convert_Set(orig: SetDSL):
     retval = SetDATA()
     retval.path = orig.path
     retval.value = convert_dynamic(orig.value, converter_function_directory)
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_Sweep(orig: SweepDSL):
@@ -351,8 +349,9 @@ def convert_Sweep(orig: SweepDSL):
     retval.reset_oscillator_phase = orig.reset_oscillator_phase
     retval.uid = orig.uid
     retval.chunk_count = orig.chunk_count
+    retval.auto_chunking = orig.auto_chunking
     retval.alignment = convert_dynamic(orig.alignment, converter_function_directory)
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_SweepParameter(orig: SweepParameterDSL):
@@ -365,7 +364,7 @@ def convert_SweepParameter(orig: SweepParameterDSL):
     retval.driven_by = (
         convert_dynamic(orig.driven_by, converter_function_directory) or []
     )
-    return post_process(orig, retval, converter_function_directory)
+    return retval
 
 
 def convert_signal_map(experiment: ExperimentDSL) -> dict:
@@ -431,8 +430,6 @@ converter_function_directory = {
     PRNGLoopDSL: convert_PRNGLoop,
     PulseFunctionalDSL: convert_PulseFunctional,
     PulseSampledDSL: convert_PulseSampled,
-    PulseSampledRealDSL: convert_PulseSampled,  # todo: walk inheritance tree to automatically fall back to parent converter
-    PulseSampledComplexDSL: convert_PulseSampled,
     ReserveDSL: convert_Reserve,
     SectionDSL: convert_Section,
     SetDSL: convert_Set,

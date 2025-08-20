@@ -11,16 +11,10 @@ from laboneq.compiler.seqc.signatures import PlaybackSignature
 from laboneq.data.scheduled_experiment import COMPLEX_USAGE
 
 
-class InvalidCommandTableError(Exception):
-    """Base class for invalid command table errors."""
-
-    pass
-
-
-class EntryLimitExceededError(InvalidCommandTableError):
-    """Too many entries are being set to the command table."""
-
-    pass
+CT_SCHEMAS = {
+    "hd_1.1.0": "https://docs.zhinst.com/hdawg/commandtable/v1_1/schema",
+    "sg_1.2.0": "https://docs.zhinst.com/shfsg/commandtable/v1_2/schema",
+}
 
 
 class CommandTableTracker:
@@ -67,31 +61,24 @@ class CommandTableTracker:
         if not ignore_already_in_table:
             assert signature not in self._table_index_by_signature
         index = len(self._command_table)
-        if index > self._device_type.max_ct_entries:
-            raise EntryLimitExceededError(
-                f"Invalid command table index: '{index}' for device {self._device_type}."
-            )
-
         if signature.increment_phase_params:
-            [_first, *rest] = signature.increment_phase_params
-            complex_phase_increment = any(r is not None for r in rest)
+            complex_phase_increment = len(signature.increment_phase_params) > 1
             for param in signature.increment_phase_params:
                 if param is None:
                     continue
                 self._parameter_phase_increment_map.setdefault(param, []).append(
                     index if not complex_phase_increment else COMPLEX_USAGE
                 )
-
         ct_entry: dict[str, bool | int | dict] = {"index": index}
         if wave_index is None:
             if signature.waveform is not None:
                 length = signature.waveform.length
                 ct_entry["waveform"] = {"playZero": True, "length": length}
-
         else:
-            ct_entry["waveform"] = {"index": wave_index}
-            if signature.clear_precompensation:
-                ct_entry["waveform"]["precompClear"] = True
+            ct_entry["waveform"] = {
+                "index": wave_index,
+                **({"precompClear": True} if signature.clear_precompensation else {}),
+            }
         ct_entry.update(self._oscillator_config(signature))
         ct_entry.update(self._amplitude_config(signature))
         self._command_table.append(ct_entry)
@@ -103,7 +90,7 @@ class CommandTableTracker:
         d: dict[str, int | bool | dict] = {}
         oscillator = signature.hw_oscillator
         if oscillator is not None:
-            d["oscillatorSelect"] = {"value": {"$ref": oscillator}}
+            d["oscillatorSelect"] = {"value": oscillator.osc_index}
 
         ct_phase = None
         do_incr = None
@@ -171,8 +158,21 @@ class CommandTableTracker:
 
         return d
 
-    def command_table(self) -> list[dict]:
-        return self._command_table
+    def command_table_usage(self) -> float:
+        return len(self._command_table) / self._device_type.max_ct_entries
+
+    def command_table(self) -> dict:
+        ct_schema = CT_SCHEMAS.get(self._device_type.ct_schema_version)
+        if ct_schema is None:
+            raise AssertionError(
+                f"Unknown command table schema version: {self._device_type.ct_schema_version}"
+            )
+        version = self._device_type.ct_schema_version.split("_", 1)[-1]
+        return {
+            "$schema": ct_schema,
+            "header": {"version": version},
+            "table": self._command_table,
+        }
 
     def get_or_create_entry(
         self,

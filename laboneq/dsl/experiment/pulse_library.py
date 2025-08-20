@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict
+import warnings
 
 import numpy as np
-
+from numpy.typing import ArrayLike
 from laboneq.core.utilities.pulse_sampler import _pulse_samplers, _pulse_factories
 from laboneq.dsl.experiment.pulse import (
     PulseFunctional,
     PulseSampled,
-    PulseSampledComplex,
-    PulseSampledReal,
 )
 
 # deprecated alias for _pulse_samples, use pulse_library.pulse_sampler(...) instead:
@@ -207,7 +206,7 @@ def gaussian_square(x, sigma=1 / 3, width=None, zero_boundaries=False, *, length
 
     if width is None:
         width = 0.9 * length
-    
+
     risefall_in_samples = round(len(x) * (1 - width / length) / 2)
     flat_in_samples = len(x) - 2 * risefall_in_samples
     gauss_x = np.linspace(-1.0, 1.0, 2 * risefall_in_samples)
@@ -226,7 +225,33 @@ def gaussian_square(x, sigma=1 / 3, width=None, zero_boundaries=False, *, length
         gauss_sq /= 1 - delta
     return gauss_sq
 
+@register_pulse_functional
+def gaussian_rise(x, sigma=1 / 3, width=None, zero_boundaries=False, **_):
 
+    gauss_rise = np.exp(-((x-1)**2) / (2 * sigma**2))
+
+    if zero_boundaries:
+        dt = x[0] - (x[1] - x[0])
+        dt = np.abs(dt)
+        delta = np.exp(-(dt**2) / (2 * sigma**2))
+        gauss_rise -= delta
+        gauss_rise /= 1 - delta
+
+    return gauss_rise
+
+@register_pulse_functional
+def gaussian_fall(x, sigma=1 / 3, width=None, zero_boundaries=False, **_):
+
+    gauss_fall = np.exp(-((x+1)**2) / (2 * sigma**2))
+
+    if zero_boundaries:
+        dt = x[0] - (x[1] - x[0])
+        dt = np.abs(dt)
+        delta = np.exp(-(dt**2) / (2 * sigma**2))
+        gauss_fall -= delta
+        gauss_fall /= 1 - delta
+
+    return gauss_fall
 
 @register_pulse_functional
 def const(x, **_):
@@ -279,7 +304,7 @@ def sawtooth(x, **_):
 
 
 @register_pulse_functional
-def drag(x, sigma=1 / 3, beta=0.2, zero_boundaries=False, **_):
+def drag(x, sigma=1 / 3, beta=0.0, zero_boundaries=False, **_):
     """Create a DRAG pulse.
 
     Arguments:
@@ -322,8 +347,90 @@ def cos2(x, **_):
     """
     return np.cos(x * np.pi / 2) ** 2
 
+@register_pulse_functional
+def cond_disp_pulse(
+    x,
+    length,
+    frequency, # input unit is Hz
+    detuning,
+    sigma=1 / 3,
+    zero_boundaries=False,
+    **_,
+):
+    """Create a conditional displacement pulse.
 
-def sampled_pulse(samples, uid=None, can_compress=False):
+    The conditional displacement pulse is defined as:
+       S_RF(t) = Re{[I(t)+iQ(t)]e^(-1j*2pi*f_IF*t)e^(-1j*2pi*f_RF*t)e^(1j*phi)}
+
+    where:
+       I(t)+iQ(t) = exp(-(t^2 / (2 * sigma^2))) * 
+       (exp(-1j*(frequency + detuning)*2*pi*t) - exp(-1j*(frequency - detuning)*2*pi*t))
+
+       f_IF + f_RF = f_d(driving freq), f_d+frequency = f_e or f_g, 
+       and nonzero detuning is asymmetric pulse.
+
+       x is an array of points in the range [-1, 1] where the pulse is evaluated.
+       len(x) is the number of samples in the pulse. 
+       sampling_rate is 2GHz/sample. So, 200ns pulse will have 400 samples.
+
+       Unit of frequency should be matched due to "x"
+    """
+
+    _frequency = frequency * length/2
+    _detuning = detuning * length/2
+
+    pulse = np.exp(-(x**2 / (2 * sigma**2)))*(np.exp(-1j*(_frequency + _detuning)*2*np.pi*x) - np.exp(-1j*(_frequency - _detuning)*2*np.pi*x))
+
+
+    if zero_boundaries:
+        dt = x[0] - (x[1] - x[0])
+        dt = np.abs(dt)
+        
+        delta = np.exp(-(dt**2 / (2 * sigma**2)))
+        
+        pulse -= delta
+        pulse /= 1 - delta
+    return pulse
+
+
+@register_pulse_functional
+def sidebands_pulse(
+    x,
+    length,
+    frequency_l, # input unit is Hz
+    frequency_h,
+    amp_l,
+    amp_h,
+    phase, # in radian
+    zero_boundaries=False,
+    **_,
+):
+    """Create a sideband pulses.
+
+    The sideband pulse is defined as:
+       S_RF(t) = Re{[I(t)+iQ(t)]e^(-1j*2pi*f_IF*t)e^(-1j*2pi*f_RF*t)e^(1j*phi)}
+               = I(t)*cos(2*pi*(f_IF+f_RF)*t) + Q(t)*sin(2*pi*(f_IF+f_RF)*t)
+    where:
+       I(t)+iQ(t) = amp_l*exp(-1j*2pi*(_frequency_l*t + phase)) + amp_h*exp(1j*2pi*(_frequency_h*t + phase))
+
+       x is an array of points in the range [-1, 1] where the pulse is evaluated.
+       len(x) is the number of samples in the pulse. 
+       sampling_rate is 2GHz/sample. So, 200ns pulse will have 400 samples.
+
+       Unit of frequency should be matched due to "x"
+    """
+
+    _frequency_l = frequency_l * length/2
+    _frequency_h = frequency_h * length/2
+
+    pulse = amp_h*np.exp(-1j*(_frequency_h*x + phase)*2*np.pi) + amp_l*np.exp(1j*(_frequency_l*x + phase)*2*np.pi)
+
+    return pulse
+
+
+def sampled_pulse(
+    samples: ArrayLike, uid: str | None = None, can_compress: bool = False
+):
     """Create a pulse based on a array of waveform values.
 
     Arguments:
@@ -339,7 +446,9 @@ def sampled_pulse(samples, uid=None, can_compress=False):
         return PulseSampled(uid=uid, samples=samples, can_compress=can_compress)
 
 
-def sampled_pulse_real(samples, uid=None, can_compress=False):
+def sampled_pulse_real(
+    samples: ArrayLike, uid: str | None = None, can_compress: bool = False
+):
     """Create a pulse based on a array of real values.
 
     Arguments:
@@ -348,14 +457,24 @@ def sampled_pulse_real(samples, uid=None, can_compress=False):
 
     Returns:
         pulse (Pulse): Pulse based on the provided sample values.
+
+    !!! version-changed "Deprecated in version 2.51.0"
+        Use `sampled_pulse` instead.
+
     """
-    if uid is None:
-        return PulseSampledReal(samples=samples, can_compress=can_compress)
-    else:
-        return PulseSampledReal(uid=uid, samples=samples, can_compress=can_compress)
+    warnings.warn(
+        "The `sampled_pulse_real` function, along with `PulseSampledReal`, is deprecated. "
+        "Please use `sampled_pulse` instead, as `sampled_pulse_real` now calls `sampled_pulse` internally.",
+        FutureWarning,
+        stacklevel=2,
+    )
+
+    return sampled_pulse(samples, uid=uid, can_compress=can_compress)
 
 
-def sampled_pulse_complex(samples, uid=None, can_compress=False):
+def sampled_pulse_complex(
+    samples: ArrayLike, uid: str | None = None, can_compress: bool = False
+):
     """Create a pulse based on a array of complex values.
 
     Args:
@@ -364,11 +483,18 @@ def sampled_pulse_complex(samples, uid=None, can_compress=False):
 
     Returns:
         pulse (Pulse): Pulse based on the provided sample values.
+
+    !!! version-changed "Deprecated in version 2.51.0"
+        Use `sampled_pulse` instead.
     """
-    if uid is None:
-        return PulseSampledComplex(samples=samples, can_compress=can_compress)
-    else:
-        return PulseSampledComplex(uid=uid, samples=samples, can_compress=can_compress)
+    warnings.warn(
+        "The `sampled_pulse_complex` function, along with `PulseSampledComplex`, is deprecated. "
+        "Please use `sampled_pulse` instead, as `sampled_pulse_complex` now calls `sampled_pulse` internally.",
+        FutureWarning,
+        stacklevel=2,
+    )
+
+    return sampled_pulse(samples, uid=uid, can_compress=can_compress)
 
 
 def pulse_sampler(name: str) -> Callable:
@@ -425,159 +551,3 @@ def pulse_factory(name: str) -> Callable:
         The factory function.
     """
     return _pulse_factories[name]
-
-# ----------------------------------- ADDITIONAL PULSE FUNCTIONs -----------------------------------
-@register_pulse_functional
-def gaussian_rise(x, sigma=1 / 3, *, length, **_):
-    """Create a gaussian rising waveform with a Gaussian shaped rise portion.
-
-                       ..
-                      . .
-                     .  .
-                   .    .
-                 .      .
-    ...........         ..............
-
-    Arguments:
-        length (float):
-            Length of the pulse in seconds
-        sigma (float):
-            Std. deviation of the Gaussian rise/fall portion of the pulse
-
-    Keyword Arguments:
-        uid ([str][]): Unique identifier of the pulse
-        amplitude ([float][]): Amplitude of the pulse
-
-    Returns:
-        pulse (Pulse): Gaussian square pulse.
-    """
-
-    risefall_in_samples = len(x)
-    gauss_x = np.linspace(-1.0, 1.0, risefall_in_samples)
-    gauss_part = np.exp(-((gauss_x-1)**2) / (2 * (sigma/2)**2))
-    
-    return gauss_part
-
-@register_pulse_functional
-def gaussian_fall(x, sigma=1 / 3, *, length, **_):
-    """Create a gaussian falling waveform with a Gaussian shaped fall portion.
-
-    ...........
-                 .      .
-                   .    .
-                     .  .
-                      . .
-                       ..
-
-    Arguments:
-        length (float):
-            Length of the pulse in seconds
-        sigma (float):
-            Std. deviation of the Gaussian rise/fall portion of the pulse
-
-    Keyword Arguments:
-        uid ([str][]): Unique identifier of the pulse
-        amplitude ([float][]): Amplitude of the pulse
-
-    Returns:
-        pulse (Pulse): Gaussian square pulse.
-    """
-
-    risefall_in_samples = len(x)
-    gauss_x = np.linspace(-1.0, 1.0, risefall_in_samples)
-    gauss_part = np.exp(-((gauss_x+1)**2) / (2 * (sigma/2)**2))
-    
-    return gauss_part
-
-@register_pulse_functional
-def asymmetriy_rotary(x, sigma=1 / 3, width=None, zero_boundaries=False, *, length, **_):
-    """Create two serial gaussian square waveforms with inverted amplitudes.
-
-    Arguments:
-        length (float):
-            Length of the pulse in seconds
-        width (float):
-            Width of the flat portion of the pulse in seconds. Dynamically set to 90% of `length` if not provided.
-        sigma (float):
-            Std. deviation of the Gaussian rise/fall portion of the pulse
-        zero_boundaries (bool):
-            Whether to zero the pulse at the boundaries
-
-    Keyword Arguments:
-        uid ([str][]): Unique identifier of the pulse
-        amplitude ([float][]): Amplitude of the pulse
-
-    Returns:
-        pulse (Pulse): Gaussian square pulse.
-    """
-
-    if width is not None and width >= length:
-        raise ValueError(
-            "The width of the flat portion of the pulse must be smaller than the total length."
-        )
-
-    if width is None:
-        width = 0.9 * length
-
-    risefall_in_samples = round(len(x) * (1 - width / length) / 4)
-    flat_in_samples = (len(x) - 4 * risefall_in_samples) // 2
-    gauss_x = np.linspace(-1.0, 1.0, 2 * risefall_in_samples)
-    gauss_part = np.exp(-(gauss_x**2) / (2 * sigma**2))
-    gauss_sq = np.concatenate(
-        (
-            gauss_part[:risefall_in_samples],
-            np.ones(flat_in_samples),
-            gauss_part[risefall_in_samples:],
-        )
-    )
-    if zero_boundaries:
-        t_left = gauss_x[0] - (gauss_x[1] - gauss_x[0])
-        delta = np.exp(-(t_left**2) / (2 * sigma**2))
-        gauss_sq -= delta
-        gauss_sq /= 1 - delta
-    return np.concatenate((gauss_sq, -gauss_sq[::-1]))
-
-@register_pulse_functional
-def cond_disp_pulse(
-    x,
-    length,
-    frequency, # input unit is Hz
-    detuning,
-    sigma=1 / 3,
-    zero_boundaries=False,
-    **_,
-):
-    """Create a conditional displacement pulse.
-
-    The conditional displacement pulse is defined as:
-       S_RF(t) = Re{[I(t)+iQ(t)]e^(-1j*2pi*f_IF*t)e^(-1j*2pi*f_RF*t)e^(1j*phi)}
-
-    where:
-       I(t)+iQ(t) = exp(-(t^2 / (2 * sigma^2))) * 
-       (exp(-1j*(frequency + detuning)*2*pi*t) - exp(-1j*(frequency - detuning)*2*pi*t))
-
-       f_IF + f_RF = f_d(driving freq), f_d+frequency = f_e or f_g, 
-       and nonzero detuning is asymmetric pulse.
-
-       x is an array of points in the range [-1, 1] where the pulse is evaluated.
-       len(x) is the number of samples in the pulse. 
-       sampling_rate is 2GHz/sample. So, 200ns pulse will have 400 samples.
-
-       Unit of frequency should be matched due to "x"
-    """
-
-    _frequency = frequency * length/2
-    _detuning = detuning * length/2
-
-    pulse = np.exp(-(x**2 / (2 * sigma**2)))*(np.exp(-1j*(_frequency + _detuning)*2*np.pi*x) - np.exp(-1j*(_frequency - _detuning)*2*np.pi*x))
-
-
-    if zero_boundaries:
-        dt = x[0] - (x[1] - x[0])
-        dt = np.abs(dt)
-        
-        delta = np.exp(-(dt**2 / (2 * sigma**2)))
-        
-        pulse -= delta
-        pulse /= 1 - delta
-    return pulse

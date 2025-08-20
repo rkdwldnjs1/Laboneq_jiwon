@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import attrs
 from typing import Optional
 
 from laboneq.core.types.enums import PortMode
 from laboneq.core.utilities.dsl_dataclass_decorator import classformatter
 from laboneq.dsl.calibration import MixerCalibration, SignalCalibration
 from laboneq.dsl.calibration.amplifier_pump import AmplifierPump
+from laboneq.dsl.calibration.calibratable import Calibratable
 from laboneq.dsl.calibration.oscillator import Oscillator
 from laboneq.dsl.calibration.precompensation import Precompensation
 from laboneq.dsl.device.io_units.logical_signal import (
@@ -28,8 +29,8 @@ def experiment_signal_id_generator():
 
 
 @classformatter
-@dataclass(init=False, repr=True, order=True)
-class ExperimentSignal:
+@attrs.define(init=False)
+class ExperimentSignal(Calibratable):
     """A signal within an experiment.
 
     Experiment signals are mapped to logical signals before an
@@ -87,7 +88,7 @@ class ExperimentSignal:
             The SHFSG, SHFQA and SHFQC port mode signal calibration.
             Ignored if the `calibration` parameter is set.
         threshold:
-            The sginal calibration state discrimation threshold.
+            The signal calibration state discrimination threshold.
             Only supported for acquisition signals on the UHFQA, SHFQA
             and SHFQC.
             Ignored if the `calibration` parameter is set.
@@ -163,7 +164,8 @@ class ExperimentSignal:
         else:
             self.calibration = calibration
         self.mapped_logical_signal_path = None
-        self.map(map_to)
+        if map_to is not None:
+            self.map(map_to)
         if mapped_logical_signal_path is not None:
             self.map(mapped_logical_signal_path)
 

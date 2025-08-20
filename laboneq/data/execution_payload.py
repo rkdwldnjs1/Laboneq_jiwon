@@ -57,15 +57,15 @@ class TargetChannelCalibration:
 
 @dataclass
 class TargetDevice:
-    uid: str = None
-    server: TargetServer = None
-    device_serial: str = None
-    device_type: TargetDeviceType = None
-    device_options: str = None
-    interface: str = None
-    has_signals: bool | None = None
-    connected_outputs: dict[str, list[int]] | None = None
-    internal_connections: list[tuple[str, str]] = field(default_factory=list)
+    uid: str
+    server: TargetServer
+    device_serial: str
+    device_type: TargetDeviceType
+    device_options: str | None
+    interface: str
+    has_signals: bool
+    connected_outputs: dict[str, list[int]]
+    internal_connections: list[str] = field(default_factory=list)
     calibrations: list[TargetChannelCalibration] | None = None
     is_qc: bool = False
     qc_with_qa: bool = False

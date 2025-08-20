@@ -9,7 +9,6 @@ from numpy.typing import ArrayLike
 
 from laboneq.core.types.compiled_experiment import CompiledExperiment
 from laboneq.data.recipe import RealtimeExecutionInit
-from laboneq.data.setup_description import PhysicalChannelType
 from laboneq.dsl.device.device_setup import DeviceSetup
 from laboneq.dsl.device.instruments.shfqc import SHFQC
 from laboneq.dsl.device.io_units.physical_channel import PhysicalChannel
@@ -144,7 +143,9 @@ class OutputSimulator:
         output_simulator = OutputSimulator(compiled_experiment)
 
         # By default, simulation is stopped after 10 ms, but it can be explicitly specified
-        output_simulator = OutputSimulator(compiled_experiment, max_simulation_length=10e-3)
+        output_simulator = OutputSimulator(
+            compiled_experiment, max_simulation_length=10e-3
+        )
 
         # Also the maximum output snippet length is configurable, defaulting to 1us
         output_simulator = OutputSimulator(compiled_experiment, max_output_length=5e-6)
@@ -208,7 +209,6 @@ class OutputSimulator:
         physical_channel: str | PhysicalChannel,
         start: float,
         output_length: float,
-        channel_type: PhysicalChannelType = PhysicalChannelType.IQ_CHANNEL,
         get_wave: bool = True,
         get_trigger: bool = False,
         get_marker: bool = False,
@@ -241,6 +241,7 @@ class OutputSimulator:
             if isinstance(physical_channel, PhysicalChannel)
             else self._uid_to_channel(physical_channel)
         )
+        channel_type = channel.type
         awg_id = _AWG_ID(
             self._compiled_experiment.device_setup,
             channel,

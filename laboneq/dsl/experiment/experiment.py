@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import attrs
 from collections import deque
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, final
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NoReturn, final
 
 from laboneq.core.exceptions import LabOneQException
 from laboneq.core.types.enums import DSLVersion
@@ -28,9 +28,29 @@ if TYPE_CHECKING:
     from .. import Parameter
 
 
+def _convert_signals(
+    signals: dict[str, ExperimentSignal]
+    | list[ExperimentSignal]
+    | list[str]
+    | list[ExperimentSignal | str]
+    | None,
+) -> dict[str, ExperimentSignal]:
+    if signals is None:
+        return {}
+    if isinstance(signals, list):
+        signals_dict = {}
+        for s in signals:
+            if isinstance(s, str):
+                signals_dict[s] = ExperimentSignal(uid=s)
+            else:
+                signals_dict[s.uid] = s
+        return signals_dict
+    return signals
+
+
 @final
 @classformatter
-@dataclass(init=True, repr=True, order=True)
+@attrs.define(slots=False)
 class Experiment:
     """LabOne Q Experiment.
 
@@ -55,36 +75,36 @@ class Experiment:
             Sections defined in the experiment.
             Default: `[]`.
 
+    !!! version-changed "Changed in version 2.54.0"
+
+        The following deprecated methods for saving and loading were removed:
+            - `load`
+            - `save`
+            - `load_signal_map`
+            - `save_signal_map`
+
+        Use the `load` and `save` functions from the `laboneq.simple` module instead.
+
     !!! version-changed "Changed in version 2.27.0"
 
-        The `uid` attribute is not longer automatically generated and
+        The `uid` attribute is no longer automatically generated and
         will be left as `None` if unspecified.
 
         The `name` attribute was added.
     """
 
-    uid: str | None = field(default=None)
-    name: str = field(default="unnamed")
-    signals: dict[str, ExperimentSignal] | list[ExperimentSignal | str] = field(
-        default_factory=dict
+    uid: str | None = attrs.field(default=None)
+    name: str = attrs.field(default="unnamed")
+    signals: dict[str, ExperimentSignal] = attrs.field(
+        factory=dict, converter=_convert_signals
     )
-    version: DSLVersion = field(default=DSLVersion.V3_0_0)
-    epsilon: float = field(default=0.0)
-    sections: list[Section] = field(default_factory=list)
+    version: DSLVersion = attrs.field(default=DSLVersion.V3_0_0)
+    epsilon: float = attrs.field(default=0.0)
+    sections: list[Section] = attrs.field(factory=list)
 
-    _section_stack: deque[Section] = field(
-        default_factory=deque, repr=False, compare=False, init=False
+    _section_stack: deque[Section] = attrs.field(
+        factory=deque, repr=False, order=False, init=False
     )
-
-    def __post_init__(self):
-        if self.signals is not None and isinstance(self.signals, list):
-            signals_dict = {}
-            for s in self.signals:
-                if isinstance(s, str):
-                    signals_dict[s] = ExperimentSignal(uid=s)
-                else:
-                    signals_dict[s.uid] = s
-            self.signals = signals_dict
 
     def add_signal(
         self, uid: str | None = None, connect_to: LogicalSignalRef | None = None
@@ -107,7 +127,7 @@ class Experiment:
         if uid is not None and uid in self.signals.keys():
             raise LabOneQException(f"Signal with id {uid} already exists.")
         signal = ExperimentSignal(uid=uid, map_to=connect_to)
-        self.signals[uid] = signal
+        self.signals[signal.uid] = signal
         return signal
 
     def add(self, section: Section):
@@ -118,7 +138,6 @@ class Experiment:
         """
         self._add_section_to_current_section(section)
 
-    @property
     def experiment_signals_uids(self) -> list[str]:
         """A list of experiment signal UIDs defined in this experiment.
 
@@ -127,7 +146,7 @@ class Experiment:
                 A list of the UIDs for the signals defined in this
                 experiment.
         """
-        return self.signals.keys
+        return list(self.signals.keys())
 
     def list_experiment_signals(self) -> list[ExperimentSignal]:
         """A list of experiment signals defined in this experiment.
@@ -238,7 +257,7 @@ class Experiment:
         return {
             signal.uid: signal.mapped_logical_signal_path
             for signal in self.signals.values()
-            if signal.is_mapped()
+            if signal.mapped_logical_signal_path is not None
         }
 
     def set_signal_map(self, signal_map: dict[str, LogicalSignalRef]):
@@ -251,14 +270,16 @@ class Experiment:
                 logical signal references to map them to.
         """
         for signal_uid, logical_signal_ref in signal_map.items():
-            if signal_uid not in self.signals.keys():
+            signal = self.signals.get(signal_uid)
+            if signal is None:
                 self._signal_not_found_error(signal_uid, "Cannot apply signal map.")
-
-            self.signals[signal_uid].map(to=logical_signal_ref)
+            signal.map(to=logical_signal_ref)
 
     # Calibration ....................................
 
-    def _signal_not_found_error(self, signal_uid: str, msg: str | None = None):
+    def _signal_not_found_error(
+        self, signal_uid: str, msg: str | None = None
+    ) -> NoReturn:
         if msg is None:
             msg = ""
         raise LabOneQException(
@@ -275,13 +296,14 @@ class Experiment:
                 elements of the device setup the experiment
                 will be executed on.
         """
-        for signal_uid, calib_item in calibration.calibration_items.items():
+        for signal_uid, calib_item in calibration.items():
             if calib_item is not None:
-                if signal_uid not in self.signals.keys():
+                signal = self.signals.get(signal_uid)
+                if signal is None:
                     self._signal_not_found_error(
                         signal_uid, "Cannot apply experiment signal calibration."
                     )
-                self.signals[signal_uid].calibration = calib_item
+                signal.calibration = calib_item
 
     def get_calibration(self) -> Calibration:
         """Return the current calibration of the experiment.
@@ -295,14 +317,13 @@ class Experiment:
         """
         from ..calibration import Calibration
 
-        experiment_signals_calibration = dict()
-        for sig in self.signals.values():
-            experiment_signals_calibration[sig.uid] = (
-                sig.calibration if sig.is_calibrated() else None
-            )
+        experiment_signals_calibration = {
+            sig.uid: sig.calibration
+            for sig in self.signals.values()
+            if sig.calibration is not None
+        }
 
-        calibration = Calibration(calibration_items=experiment_signals_calibration)
-        return calibration
+        return Calibration(calibration_items=experiment_signals_calibration)
 
     def reset_calibration(self, calibration: Calibration | None = None):
         """Reset the experiment calibration.
@@ -316,11 +337,7 @@ class Experiment:
                 experiment calibration.
                 Default: `None`.
         """
-        try:
-            signals = self.signals.values()
-        except AttributeError:
-            signals = self.signals
-        for sig in signals:
+        for sig in self.signals.values():
             sig.reset_calibration()
         if calibration:
             self.set_calibration(calibration)
@@ -598,6 +615,7 @@ class Experiment:
         alignment: SectionAlignment | None = None,
         reset_oscillator_phase: bool = False,
         chunk_count: int = 1,
+        auto_chunking: bool = False,
     ):
         """Define a sweep section.
 
@@ -632,6 +650,10 @@ class Experiment:
                 each step.
             chunk_count:
                 The number of chunks to split the sweep into. Defaults to 1.
+                If auto chunking is enabled, this will be used as an initial guess.
+            auto_chunking:
+                If True, the compiler will decide how many chunks to divide this sweep into
+                to respect resource limitations of instruments.
 
         """
         return Experiment._SweepSectionContext(
@@ -642,6 +664,7 @@ class Experiment:
             alignment=alignment,
             reset_oscillator_phase=reset_oscillator_phase,
             chunk_count=chunk_count,
+            auto_chunking=auto_chunking,
         )
 
     class _SweepSectionContext:
@@ -654,6 +677,7 @@ class Experiment:
             alignment,
             reset_oscillator_phase,
             chunk_count,
+            auto_chunking,
         ):
             self.exp = experiment
             args = {"parameters": parameters}
@@ -679,6 +703,7 @@ class Experiment:
                 args["reset_oscillator_phase"] = reset_oscillator_phase
 
             args["chunk_count"] = chunk_count
+            args["auto_chunking"] = auto_chunking
 
             self.sweep = Sweep(**args)
 
@@ -1233,61 +1258,6 @@ class Experiment:
             self.exp._pop_and_add_section()
 
     @staticmethod
-    def load(filename: str) -> Experiment:
-        """Load an experiment from a JSON file.
-
-        Arguments:
-            filename:
-                The name of the file to load the experiment from.
-
-        Returns:
-            experiment:
-                The experiment loaded.
-        """
-        from ..serialization import Serializer
-
-        # TODO ErC: Error handling
-        return Serializer.from_json_file(filename, Experiment)
-
-    def save(self, filename: str):
-        """Save this experiment to a file.
-
-        Arguments:
-            filename:
-                The name of the file to save the experiment to.
-        """
-        from ..serialization import Serializer
-
-        # TODO ErC: Error handling
-        Serializer.to_json_file(self, filename)
-
-    def load_signal_map(self, filename: str):
-        """Load a signal map from a file and apply it to this experiment.
-
-        Arguments:
-            filename:
-                The name of the file to load the signal map from.
-        """
-        from ..serialization import Serializer
-
-        # TODO ErC: Error handling
-        signal_map = Serializer.from_json_file(filename, dict)
-        self.set_signal_map(signal_map)
-
-    def save_signal_map(self, filename: str):
-        """Save this experiments current signal map to a file.
-
-        Arguments:
-            filename:
-                The name of the file to save the current signal map
-                to.
-        """
-        from ..serialization import Serializer
-
-        # TODO ErC: Error handling
-        Serializer.to_json_file(self.get_signal_map(), filename)
-
-    @staticmethod
     def _all_subsections(section: Section):
         retval = [section]
         for s in section.sections:
@@ -1310,19 +1280,17 @@ class Experiment:
             retval.extend(Experiment._all_subsections(s))
         return retval
 
-    def _traverse(self):
-        staq = deque([self.sections[0]])
+    def _traverse(self) -> Iterator[Section]:
+        staq: deque[Section] = deque(self.sections)
 
         while len(staq):
             sec = staq.pop()
             yield sec
-            try:
-                staq.extendleft(sec.children)
-            except AttributeError:
-                pass
+            staq.extendleft(sec.sections)
 
-    def get_rt_acquire_loop(self) -> AcquireLoopRt:
+    def get_rt_acquire_loop(self) -> AcquireLoopRt | None:
         """Return the real-time acquire loop object."""
         for node in self._traverse():
             if isinstance(node, AcquireLoopRt):
                 return node
+        return None

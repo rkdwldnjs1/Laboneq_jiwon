@@ -6,10 +6,10 @@ import asyncio
 
 import itertools
 import logging
-import time
 from typing import TYPE_CHECKING, Any, Iterator
-from weakref import ref
 
+from laboneq.controller.devices.channel_base import ChannelBase
+from laboneq.controller.devices.qachannel import QAChannel, ch_uses_lrt
 import numpy as np
 
 from laboneq.controller.attribute_value_tracker import (
@@ -17,11 +17,7 @@ from laboneq.controller.attribute_value_tracker import (
     DeviceAttribute,
     DeviceAttributesView,
 )
-from laboneq.controller.communication import (
-    DaqNodeSetAction,
-)
-from laboneq.controller.devices.async_support import _gather, canonical_properties
-from laboneq.controller.devices.awg_pipeliner import AwgPipeliner
+from laboneq.controller.devices.async_support import _gather
 from laboneq.controller.devices.device_shf_base import (
     DeviceSHFBase,
     check_synth_frequency,
@@ -30,23 +26,20 @@ from laboneq.controller.devices.device_utils import NodeCollector
 from laboneq.controller.devices.device_zi import (
     AllocatedOscillator,
     SequencerPaths,
-    Waveforms,
     delay_to_rounded_samples,
     RawReadoutData,
 )
 from laboneq.controller.recipe_processor import (
-    AwgConfig,
-    AwgKey,
-    DeviceRecipeData,
     RecipeData,
     RtExecutionInfo,
+    WaveformItem,
+    Waveforms,
     get_artifacts,
     get_initialization_by_device_uid,
     get_wave,
 )
 from laboneq.controller.util import LabOneQControllerException
 from laboneq.core.types.enums.acquisition_type import AcquisitionType, is_spectroscopy
-from laboneq.core.types.enums.averaging_mode import AveragingMode
 from laboneq.data.calibration import PortMode
 from laboneq.data.recipe import (
     IO,
@@ -81,18 +74,9 @@ SPECTROSCOPY_DELAY_OFFSET = 220e-9  # LabOne Q calibrated value
 SCOPE_DELAY_OFFSET = INTEGRATION_DELAY_OFFSET  # Equality tested at FW level
 
 MAX_INTEGRATION_WEIGHT_LENGTH = 4096
-MAX_WAVEFORM_LENGTH_INTEGRATION = 4096
-MAX_WAVEFORM_LENGTH_SPECTROSCOPY = 65536
-
-MAX_AVERAGES_SCOPE = 1 << 16
-MAX_AVERAGES_RESULT_LOGGER = 1 << 17
-MAX_RESULT_VECTOR_LENGTH = 1 << 19
-
-# value reported by /system/properties/timebase
-TIME_STAMP_TIMEBASE = 0.25e-9
 
 
-def calc_theoretical_assignment_vec(num_weights: int) -> NumPyArray:
+def _calc_theoretical_assignment_vec(num_weights: int) -> NumPyArray:
     """Calculates the theoretical assignment vector, assuming that
     zhinst.utils.QuditSettings ws used to calculate the weights
     and the first d-1 weights were selected as kernels.
@@ -119,12 +103,33 @@ def calc_theoretical_assignment_vec(num_weights: int) -> NumPyArray:
     return assignment_vec
 
 
+def _integrator_has_consistent_msd_num_state(
+    integrator_allocation: IntegratorAllocation,
+):
+    num_states = integrator_allocation.kernel_count + 1
+    num_thresholds = len(integrator_allocation.thresholds)
+    num_expected_thresholds = (num_states - 1) * num_states // 2
+
+    def pluralize(n, noun):
+        return f"{n} {noun}{'s' if n > 1 else ''}"
+
+    if num_thresholds != num_expected_thresholds:
+        raise LabOneQControllerException(
+            f"Multi discrimination configuration of experiment is not consistent."
+            f" For {pluralize(num_states, 'state')}, I expected"
+            f" {pluralize(integrator_allocation.kernel_count, 'kernel')}"
+            f" and {pluralize(num_expected_thresholds, 'threshold')}, but got"
+            f" {pluralize(num_thresholds, 'threshold')}.\n"
+            "For n states, there should be n-1 kernels, and (n-1)*n/2 thresholds."
+        )
+
+
 class DeviceSHFQA(DeviceSHFBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dev_type = "SHFQA4"
         self.dev_opts = []
-        self._pipeliner = AwgPipeliner(ref(self), f"/{self.serial}/qachannels", "QA")
+        self._qachannels: list[QAChannel] = []
         self._channels = 4
         self._integrators = 16
         self._long_readout_available = True
@@ -135,14 +140,17 @@ class DeviceSHFQA(DeviceSHFBase):
     def has_pipeliner(self) -> bool:
         return True
 
+    def all_channels(self) -> Iterator[ChannelBase]:
+        return iter(self._qachannels)
+
     def pipeliner_prepare_for_upload(self, index: int) -> NodeCollector:
-        return self._pipeliner.prepare_for_upload(index)
+        return self._qachannels[index].pipeliner.prepare_for_upload()
 
     def pipeliner_commit(self, index: int) -> NodeCollector:
-        return self._pipeliner.commit(index)
+        return self._qachannels[index].pipeliner.commit()
 
     def pipeliner_ready_conditions(self, index: int) -> dict[str, Any]:
-        return self._pipeliner.ready_conditions(index)
+        return self._qachannels[index].pipeliner.ready_conditions()
 
     @property
     def dev_repr(self) -> str:
@@ -171,20 +179,30 @@ class DeviceSHFQA(DeviceSHFBase):
         else:
             self._integrators = 8
         self._long_readout_available = "LRT" in self.dev_opts
+        self._qachannels = [
+            QAChannel(
+                api=self._api,
+                subscriber=self._subscriber,
+                device_uid=self.uid,
+                serial=self.serial,
+                channel=ch,
+                integrators=self._integrators,
+                repr_base=self.dev_repr,
+            )
+            for ch in range(self._channels)
+        ]
 
     def _get_sequencer_type(self) -> str:
         return "qa"
 
     def get_sequencer_paths(self, index: int) -> SequencerPaths:
+        qachannel = self._qachannels[index]
         return SequencerPaths(
-            elf=f"/{self.serial}/qachannels/{index}/generator/elf/data",
-            progress=f"/{self.serial}/qachannels/{index}/generator/elf/progress",
-            enable=f"/{self.serial}/qachannels/{index}/generator/enable",
-            ready=f"/{self.serial}/qachannels/{index}/generator/ready",
+            elf=qachannel.nodes.generator_elf_data,
+            progress=qachannel.nodes.generator_elf_progress,
+            enable=qachannel.nodes.generator_enable,
+            ready=qachannel.nodes.generator_ready,
         )
-
-    def _get_num_awgs(self) -> int:
-        return self._channels
 
     def _validate_range(self, io: IO, is_out: bool):
         if io.range is None:
@@ -215,23 +233,17 @@ class DeviceSHFQA(DeviceSHFBase):
                 range_list,
             )
 
-    def validate_scheduled_experiment(
-        self, device_uid: str, scheduled_experiment: ScheduledExperiment
-    ):
-        artifacts = get_artifacts(
-            scheduled_experiment.artifacts, self._device_class, ArtifactsCodegen
-        )
-        long_readout_signals = artifacts.requires_long_readout.get(device_uid, [])
+    def validate_scheduled_experiment(self, scheduled_experiment: ScheduledExperiment):
+        artifacts = get_artifacts(scheduled_experiment.artifacts, ArtifactsCodegen)
+        long_readout_signals = artifacts.requires_long_readout.get(self.uid, [])
         if len(long_readout_signals) > 0:
             if not self._long_readout_available:
                 raise LabOneQControllerException(
                     f"{self.dev_repr}: Experiment requires long readout that is not available on the device."
                 )
-            # for iw in artifacts.integration_weights.items()
-            # nc.add("qachannels/?/modulation/enable", 1)
 
         initialization = get_initialization_by_device_uid(
-            scheduled_experiment.recipe, device_uid
+            scheduled_experiment.recipe, self.uid
         )
         if initialization is not None:
             for input in initialization.inputs:
@@ -249,6 +261,10 @@ class DeviceSHFQA(DeviceSHFBase):
                     f"{self.dev_repr}: Port mode mismatch between input and output of"
                     f" channel {input.channel}."
                 )
+
+    def validate_recipe_data(self, recipe_data: RecipeData):
+        for integrator_allocation in recipe_data.recipe.integrator_allocations:
+            _integrator_has_consistent_msd_num_state(integrator_allocation)
 
     def _get_next_osc_index(
         self,
@@ -275,277 +291,64 @@ class DeviceSHFQA(DeviceSHFBase):
         return previously_allocated
 
     def _make_osc_path(self, channel: int, index: int) -> str:
-        return f"/{self.serial}/qachannels/{channel}/oscs/{index}/freq"
+        return self._qachannels[channel].nodes.osc_freq[index]
 
-    async def disable_outputs(
-        self, outputs: set[int], invert: bool
-    ) -> list[DaqNodeSetAction]:
-        nc = NodeCollector(base=f"/{self.serial}/")
-        for ch in range(self._channels):
-            if (ch in outputs) != invert:
-                nc.add(f"qachannels/{ch}/output/on", 0, cache=False)
-        return await self.maybe_async(nc)
-
-    async def on_experiment_end(self) -> list[DaqNodeSetAction]:
-        nc = NodeCollector(base=f"/{self.serial}/")
-        # in CW spectroscopy mode, turn off the tone
-        nc.add("qachannels/*/spectroscopy/envelope/enable", 1, cache=False)
-        return (await super().on_experiment_end()) + (await self.maybe_async(nc))
-
-    def _result_node_readout(self, ch: int, integrator: int) -> str:
-        return f"/{self.serial}/qachannels/{ch}/readout/result/data/{integrator}/wave"
-
-    def _result_node_spectroscopy(self, ch: int) -> str:
-        return f"/{self.serial}/qachannels/{ch}/spectroscopy/result/data/wave"
+    async def disable_outputs(self, outputs: set[int], invert: bool):
+        await self.set_async(
+            NodeCollector.all(
+                [
+                    ch.disable_output()
+                    for ch in self._qachannels
+                    if (ch.channel in outputs) != invert
+                ]
+            )
+        )
 
     def _result_node_scope(self, ch: int) -> str:
         return f"/{self.serial}/scopes/0/channels/{ch}/wave"
 
-    def _nodes_to_monitor_impl(self) -> list[str]:
-        nodes = super()._nodes_to_monitor_impl()
-        if self._api is None:
-            nodes.extend([path for path, _ in self._collect_warning_nodes()])
-        for awg in range(self._get_num_awgs()):
-            if self._api is None:
-                nodes.append(self.get_sequencer_paths(awg).enable)
-                for result_index in range(self._integrators):
-                    nodes.append(self._result_node_readout(awg, result_index))
-                nodes.append(self._result_node_spectroscopy(awg))
-                # 1:1 mapping of QA channels to scope channels
-                nodes.append(self._result_node_scope(awg))
-            nodes.extend(
-                self._pipeliner.control_nodes(awg, use_async_api=self._api is not None)
-            )
-        return nodes
+    def _busy_nodes(self) -> list[str]:
+        if not self._setup_caps.supports_shf_busy:
+            return []
+        return [self._qachannels[ch].nodes.busy for ch in self._allocated_awgs]
 
     def configure_acquisition(
         self,
-        awg_key: AwgKey,
-        awg_config: AwgConfig,
-        integrator_allocations: list[IntegratorAllocation],
-        averages: int,
-        averaging_mode: AveragingMode,
-        acquisition_type: AcquisitionType,
-        pipeliner_job: int | None,
         recipe_data: RecipeData,
+        awg_index: int,
+        pipeliner_job: int,
     ) -> NodeCollector:
-        nc = NodeCollector()
-        average_mode = 0 if averaging_mode == AveragingMode.CYCLIC else 1
-        nc.extend(
-            self._configure_readout(
-                acquisition_type,
-                awg_key,
-                awg_config,
-                integrator_allocations,
-                averages,
-                average_mode,
-                recipe_data,
-                pipeliner_job,
-            )
+        return self._qachannels[awg_index].configure_acquisition(
+            recipe_data=recipe_data, pipeliner_job=pipeliner_job
         )
-        nc.extend(
-            self._configure_spectroscopy(
-                acquisition_type,
-                awg_key.awg_index,
-                awg_config.result_length,
-                averages,
-                average_mode,
-                pipeliner_job,
-            )
-        )
-        if pipeliner_job in [None, 0]:
-            # The scope is not pipelined, so any job beyond the first cannot reconfigure
-            # it.
-            nc.extend(
-                self._configure_scope(
-                    enable=acquisition_type == AcquisitionType.RAW,
-                    channel=awg_key.awg_index,
-                    averages=averages,
-                    acquire_length=awg_config.raw_acquire_length,
-                )
-            )
-        return nc
 
-    def _configure_readout(
-        self,
-        acquisition_type: AcquisitionType,
-        awg_key: AwgKey,
-        awg_config: AwgConfig,
-        integrator_allocations: list[IntegratorAllocation],
-        averages: int,
-        average_mode: int,
-        recipe_data: RecipeData,
-        pipeliner_job: int | None,
-    ) -> NodeCollector:
-        enable = acquisition_type in [
-            AcquisitionType.INTEGRATION,
-            AcquisitionType.DISCRIMINATION,
-        ]
-        channel = awg_key.awg_index
+    async def start_execution(self, with_pipeliner: bool):
         nc = NodeCollector(base=f"/{self.serial}/")
-        first_job_in_pipeline = pipeliner_job in [0, None]
-        if enable:
-            nc.add(f"qachannels/{channel}/readout/result/enable", 0, cache=False)
-        if enable and first_job_in_pipeline:
-            if averages > MAX_AVERAGES_RESULT_LOGGER:
-                raise LabOneQControllerException(
-                    f"Number of averages {averages} exceeds the allowed maximum {MAX_AVERAGES_RESULT_LOGGER}"
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner:
+                nc.extend(
+                    self._qachannels[awg_index].pipeliner.collect_execution_nodes()
                 )
-            result_length = awg_config.result_length
-            if result_length is None:
-                # this AWG core does not acquire results
-                return nc
-            if result_length > MAX_RESULT_VECTOR_LENGTH:
-                raise LabOneQControllerException(
-                    f"Number of distinct readouts {result_length} on device {self.dev_repr},"
-                    f" channel {channel}, exceeds the allowed maximum {MAX_RESULT_VECTOR_LENGTH}"
-                )
-
-            nc.add(
-                f"qachannels/{channel}/readout/result/source",
-                # 1 - result_of_integration
-                # 3 - result_of_discrimination
-                3 if acquisition_type == AcquisitionType.DISCRIMINATION else 1,
-            )
-            nc.add(f"qachannels/{channel}/readout/result/length", result_length)
-            nc.add(f"qachannels/{channel}/readout/result/averages", averages)
-
-            nc.add(f"qachannels/{channel}/readout/result/mode", average_mode)
-            if acquisition_type in [
-                AcquisitionType.INTEGRATION,
-                AcquisitionType.DISCRIMINATION,
-            ]:
-                uses_lrt = self._uses_lrt(awg_key.device_uid, channel, recipe_data)
-                for integrator in integrator_allocations:
-                    if (
-                        integrator.device_id != awg_key.device_uid
-                        or integrator.signal_id not in awg_config.acquire_signals
-                    ):
-                        continue
-                    assert len(integrator.channels) == 1
-                    integrator_idx = integrator.channels[0]
-                    if uses_lrt:
-                        if len(integrator.thresholds) > 1:
-                            raise LabOneQControllerException(
-                                f"{self.dev_repr}: Multistate discrimination cannot be used with a long readout."
-                            )
-                        threshold = (
-                            0.0
-                            if len(integrator.thresholds) == 0
-                            else integrator.thresholds[0]
-                        )
-                        nc.add(
-                            f"qachannels/{channel}/readout/discriminators/{integrator_idx}/threshold",
-                            threshold,
-                        )
-                        continue
-                    self._integrator_has_consistent_msd_num_state(integrator)
-                    for state_i, threshold in enumerate(integrator.thresholds):
-                        nc.add(
-                            f"qachannels/{channel}/readout/multistate/qudits/{integrator_idx}/thresholds/{state_i}/value",
-                            threshold or 0.0,
-                        )
-        nc.barrier()
-        nc.add(
-            f"qachannels/{channel}/readout/result/enable",
-            1 if enable else 0,
-            cache=False,
-        )
-        return nc
-
-    def _configure_spectroscopy(
-        self,
-        acq_type: AcquisitionType,
-        channel: int,
-        result_length: int,
-        averages: int,
-        average_mode: int,
-        pipeliner_job: int | None,
-    ) -> NodeCollector:
-        nc = NodeCollector(base=f"/{self.serial}/")
-        if result_length is None:
-            return nc  # this AWG does not acquire results
-        first_job_in_pipeline = pipeliner_job in [0, None]
-        if is_spectroscopy(acq_type) and first_job_in_pipeline:
-            if averages > MAX_AVERAGES_RESULT_LOGGER:
-                raise LabOneQControllerException(
-                    f"Number of averages {averages} exceeds the allowed maximum {MAX_AVERAGES_RESULT_LOGGER}"
-                )
-            if result_length > MAX_RESULT_VECTOR_LENGTH:
-                raise LabOneQControllerException(
-                    f"Number of distinct readouts {result_length} on device {self.dev_repr},"
-                    f" channel {channel}, exceeds the allowed maximum {MAX_RESULT_VECTOR_LENGTH}"
-                )
-            nc.add(f"qachannels/{channel}/spectroscopy/result/length", result_length)
-            nc.add(f"qachannels/{channel}/spectroscopy/result/averages", averages)
-            nc.add(f"qachannels/{channel}/spectroscopy/result/mode", average_mode)
-            nc.add(f"qachannels/{channel}/spectroscopy/psd/enable", 0)
-        if is_spectroscopy(acq_type):
-            nc.add(f"qachannels/{channel}/spectroscopy/result/enable", 0)
-        if acq_type == AcquisitionType.SPECTROSCOPY_PSD:
-            nc.add(f"qachannels/{channel}/spectroscopy/psd/enable", 1)
-        nc.barrier()
-        nc.add(
-            f"qachannels/{channel}/spectroscopy/result/enable",
-            1 if is_spectroscopy(acq_type) else 0,
-        )
-        return nc
-
-    def _configure_scope(
-        self, enable: bool, channel: int, averages: int, acquire_length: int
-    ) -> NodeCollector:
-        # TODO(2K): multiple acquire events
-        nc = NodeCollector(base=f"/{self.serial}/scopes/0/")
-        if enable:
-            if averages > MAX_AVERAGES_SCOPE:
-                raise LabOneQControllerException(
-                    f"Number of averages {averages} exceeds the allowed maximum {MAX_AVERAGES_SCOPE}"
-                )
-            nc.add("time", 0)  # 0 -> 2 GSa/s
-            nc.add("averaging/enable", 1)
-            nc.add("averaging/count", averages)
-            nc.add(f"channels/{channel}/enable", 1)
-            nc.add(f"channels/{channel}/inputselect", channel)  # channelN_signal_input
-            # scope length has a granularity of 16
-            scope_length = (acquire_length + 0xF) & (~0xF)
-            nc.add("length", scope_length)
-            nc.add("segments/enable", 0)
-            # TODO(2K): multiple acquire events per monitor
-            # "segments/enable", 1
-            # "segments/count", measurement.result_length
-            # TODO(2K): only one trigger is possible for all channels. Which one to use?
-            nc.add("trigger/channel", 64 + channel)  # channelN_sequencer_monitor0
-            nc.add("trigger/enable", 1)
-            nc.add("enable", 0)  # todo: barrier needed?
-            nc.add("single", 1, cache=False)
-        nc.add("enable", 1 if enable else 0)
-        return nc
-
-    async def collect_execution_nodes(
-        self, with_pipeliner: bool
-    ) -> list[DaqNodeSetAction]:
-        if with_pipeliner:
-            nc = self._pipeliner.collect_execution_nodes()
-        else:
-            nc = NodeCollector(base=f"/{self.serial}/")
-            for awg_index in self._allocated_awgs:
+            else:
                 nc.add(f"qachannels/{awg_index}/generator/enable", 1, cache=False)
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_execution_setup_nodes(
-        self, with_pipeliner: bool, has_awg_in_use: bool
-    ) -> list[DaqNodeSetAction]:
-        hw_sync = with_pipeliner and has_awg_in_use
+    async def setup_one_step_execution(
+        self, recipe_data: RecipeData, with_pipeliner: bool
+    ):
+        hw_sync = with_pipeliner and (
+            self._has_awg_in_use(recipe_data) or self.options.is_qc
+        )
         nc = NodeCollector(base=f"/{self.serial}/")
         if hw_sync and self._emit_trigger:
             nc.add("system/internaltrigger/synchronization/enable", 1)  # enable
         if hw_sync and not self._emit_trigger:
             nc.add("system/synchronization/source", 1)  # external
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_internal_start_execution_nodes(self) -> list[DaqNodeSetAction]:
-        nc = NodeCollector(base=f"/{self.serial}/")
+    async def emit_start_trigger(self, with_pipeliner: bool):
         if self._emit_trigger:
+            nc = NodeCollector(base=f"/{self.serial}/")
             nc.add(
                 (
                     "system/internaltrigger/enable"
@@ -555,44 +358,48 @@ class DeviceSHFQA(DeviceSHFBase):
                 1,
                 cache=False,
             )
-        return await self.maybe_async(nc)
+            await self.set_async(nc)
 
     def conditions_for_execution_ready(
         self, with_pipeliner: bool
     ) -> dict[str, tuple[Any, str]]:
-        if with_pipeliner:
-            conditions = self._pipeliner.conditions_for_execution_ready()
-        else:
-            # TODO(janl): Not sure whether we need this condition on the SHFQA (including SHFQC)
-            # as well. The state of the generator enable wasn't always picked up reliably, so we
-            # only check in cases where we rely on external triggering mechanisms.
-            conditions = {
-                self.get_sequencer_paths(awg_index).enable: (
-                    1,
-                    f"{self.dev_repr}: Readout pulse generator {awg_index + 1} didn't start.",
+        conditions: dict[str, tuple[Any, str]] = {}
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner:
+                conditions.update(
+                    self._qachannels[
+                        awg_index
+                    ].pipeliner.conditions_for_execution_ready()
                 )
-                for awg_index in self._allocated_awgs
-            }
+            else:
+                # TODO(janl): Not sure whether we need this condition on the SHFQA (including SHFQC)
+                # as well. The state of the generator enable wasn't always picked up reliably, so we
+                # only check in cases where we rely on external triggering mechanisms.
+                conditions[self.get_sequencer_paths(awg_index).enable] = (
+                    1,
+                    f"Readout pulse generator {awg_index} didn't start.",
+                )
         return conditions
 
     def conditions_for_execution_done(
         self, acquisition_type: AcquisitionType, with_pipeliner: bool
     ) -> dict[str, tuple[Any, str]]:
-        if with_pipeliner:
-            conditions = self._pipeliner.conditions_for_execution_done()
-        else:
-            conditions = {
-                self.get_sequencer_paths(awg_index).enable: (
-                    0,
-                    f"{self.dev_repr}: Generator {awg_index + 1} didn't stop. Missing start trigger? Check ZSync.",
+        conditions: dict[str, tuple[Any, str]] = {}
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner:
+                conditions.update(
+                    self._qachannels[
+                        awg_index
+                    ].pipeliner.conditions_for_execution_done()
                 )
-                for awg_index in self._allocated_awgs
-            }
+            else:
+                conditions[self.get_sequencer_paths(awg_index).enable] = (
+                    0,
+                    f"Generator {awg_index} didn't stop. Missing start trigger? Check ZSync.",
+                )
         return conditions
 
-    async def collect_execution_teardown_nodes(
-        self, with_pipeliner: bool
-    ) -> list[DaqNodeSetAction]:
+    async def teardown_one_step_execution(self, with_pipeliner: bool):
         nc = NodeCollector(base=f"/{self.serial}/")
 
         if not self.is_standalone():
@@ -600,10 +407,18 @@ class DeviceSHFQA(DeviceSHFBase):
             # HULK-1707: this must happen before disabling the synchronization of the last AWG
             nc.add("system/synchronization/source", 0)
 
-        if with_pipeliner:
-            nc.extend(self._pipeliner.reset_nodes())
+        # In case of hold-off errors, the result logger may still be waiting. Disabling
+        # the result logger then generates an error.
+        # We thus reset the result logger now (rather than waiting for the beginning of
+        # the next experiment or RT execution), so the error is correctly associated
+        # with the _current_ job.
+        nc.add("qachannels/*/readout/result/enable", 0, cache=False)
 
-        return await self.maybe_async(nc)
+        if with_pipeliner:
+            for awg_index in self._allocated_awgs:
+                nc.extend(self._qachannels[awg_index].pipeliner.reset_nodes())
+
+        await self.set_async(nc)
 
     def pre_process_attributes(
         self,
@@ -619,7 +434,7 @@ class DeviceSHFQA(DeviceSHFBase):
                     value_or_param=output.amplitude,
                 )
 
-        center_frequencies = {}
+        center_frequencies: dict[int, int] = {}
         ios = (initialization.outputs or []) + (initialization.inputs or [])
         for idx, io in enumerate(ios):
             if io.lo_frequency is not None:
@@ -639,16 +454,12 @@ class DeviceSHFQA(DeviceSHFBase):
                     value_or_param=io.lo_frequency,
                 )
 
-    async def collect_initialization_nodes(
-        self,
-        device_recipe_data: DeviceRecipeData,
-        initialization: Initialization,
-        recipe_data: RecipeData,
-    ) -> list[DaqNodeSetAction]:
+    async def apply_initialization(self, recipe_data: RecipeData):
         _logger.debug("%s: Initializing device...", self.dev_repr)
 
         nc = NodeCollector(base=f"/{self.serial}/")
 
+        initialization = recipe_data.get_initialization(self.uid)
         outputs = initialization.outputs or []
         for output in outputs:
             self._warn_for_unsupported_param(
@@ -659,7 +470,6 @@ class DeviceSHFQA(DeviceSHFBase):
             self._warn_for_unsupported_param(
                 output.gains is None, "correction_matrix", output.channel
             )
-            self._allocated_awgs.add(output.channel)
             nc.add(f"qachannels/{output.channel}/output/on", 1 if output.enable else 0)
             if output.range is not None:
                 self._validate_range(output, is_out=True)
@@ -692,17 +502,15 @@ class DeviceSHFQA(DeviceSHFBase):
                 self._validate_range(input, is_out=False)
                 nc.add(f"qachannels/{input.channel}/input/range", input.range)
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    def collect_prepare_nt_step_nodes(
+    def _collect_prepare_nt_step_nodes(
         self, attributes: DeviceAttributesView, recipe_data: RecipeData
     ) -> NodeCollector:
         nc = NodeCollector(base=f"/{self.serial}/")
-        nc.extend(super().collect_prepare_nt_step_nodes(attributes, recipe_data))
+        nc.extend(super()._collect_prepare_nt_step_nodes(attributes, recipe_data))
 
-        acquisition_type = RtExecutionInfo.get_acquisition_type(
-            recipe_data.rt_execution_infos
-        )
+        acquisition_type = recipe_data.rt_execution_info.acquisition_type
 
         for ch in range(self._channels):
             [synth_cf], synth_cf_updated = attributes.resolve(
@@ -803,100 +611,23 @@ class DeviceSHFQA(DeviceSHFBase):
 
     def prepare_upload_binary_wave(
         self,
-        filename: str,
-        waveform: NumPyArray,
         awg_index: int,
-        wave_index: int,
+        wave: WaveformItem,
         acquisition_type: AcquisitionType,
     ) -> NodeCollector:
-        assert not is_spectroscopy(acquisition_type) or wave_index == 0
-        nc = NodeCollector()
-        nc.add(
-            (
-                f"/{self.serial}/qachannels/{awg_index}/spectroscopy/envelope/wave"
-                if is_spectroscopy(acquisition_type)
-                else f"/{self.serial}/qachannels/{awg_index}/generator/waveforms/{wave_index}/wave"
-            ),
-            waveform,
-            cache=False,
-            filename=filename,
-        )
-        return nc
+        if is_spectroscopy(acquisition_type):
+            return self._qachannels[awg_index].upload_spectroscopy_envelope(wave)
+        return self._qachannels[awg_index].upload_generator_wave(wave)
 
     def prepare_upload_all_binary_waves(
         self,
-        awg_index,
+        awg_index: int,
         waves: Waveforms,
         acquisition_type: AcquisitionType,
     ) -> NodeCollector:
-        nc = NodeCollector()
-        has_spectroscopy_envelope = False
-        if is_spectroscopy(acquisition_type):
-            if len(waves) > 1:
-                raise LabOneQControllerException(
-                    f"{self.dev_repr}: Only one envelope waveform per physical channel is "
-                    f"possible in spectroscopy mode. Check play commands for channel {awg_index}."
-                )
-            max_len = MAX_WAVEFORM_LENGTH_SPECTROSCOPY
-            for wave in waves:
-                has_spectroscopy_envelope = True
-                wave_len = len(wave.samples)
-                if wave_len > max_len:
-                    max_pulse_len = max_len / SAMPLE_FREQUENCY_HZ
-                    raise LabOneQControllerException(
-                        f"{self.dev_repr}: Length {wave_len} of the envelope waveform "
-                        f"'{wave.name}' for spectroscopy unit {awg_index} exceeds maximum "
-                        f"of {max_len} samples. Ensure measure pulse doesn't "
-                        f"exceed {max_pulse_len * 1e6:.3f} us."
-                    )
-                nc.extend(
-                    self.prepare_upload_binary_wave(
-                        filename=wave.name,
-                        waveform=wave.samples,
-                        awg_index=awg_index,
-                        wave_index=0,
-                        acquisition_type=acquisition_type,
-                    )
-                )
-        else:
-            nc.add(
-                f"/{self.serial}/qachannels/{awg_index}/generator/clearwave",
-                1,
-                cache=False,
-            )
-            max_len = MAX_WAVEFORM_LENGTH_INTEGRATION
-            for wave in waves:
-                wave_len = len(wave.samples)
-                if wave_len > max_len:
-                    max_pulse_len = max_len / SAMPLE_FREQUENCY_HZ
-                    raise LabOneQControllerException(
-                        f"{self.dev_repr}: Length {wave_len} of the waveform '{wave.name}' "
-                        f"for generator {awg_index} / wave slot {wave.index} exceeds maximum "
-                        f"of {max_len} samples. Ensure measure pulse doesn't exceed "
-                        f"{max_pulse_len * 1e6:.3f} us."
-                    )
-                nc.extend(
-                    self.prepare_upload_binary_wave(
-                        filename=wave.name,
-                        waveform=wave.samples,
-                        awg_index=awg_index,
-                        wave_index=wave.index,
-                        acquisition_type=acquisition_type,
-                    )
-                )
-                if wave.hold_start is not None:
-                    assert wave.hold_length is not None
-                    hold_base = f"/{self.serial}/qachannels/{awg_index}/generator/waveforms/{wave.index}/hold"
-                    nc.add(f"{hold_base}/enable", 1, cache=False)
-                    nc.add(
-                        f"{hold_base}/samples/startindex", wave.hold_start, cache=False
-                    )
-                    nc.add(f"{hold_base}/samples/length", wave.hold_length, cache=False)
-        nc.add(
-            f"/{self.serial}/qachannels/{awg_index}/spectroscopy/envelope/enable",
-            1 if has_spectroscopy_envelope else 0,
+        return self._qachannels[awg_index].prepare_upload_all_binary_waves(
+            waves, acquisition_type
         )
-        return nc
 
     def prepare_upload_all_integration_weights(
         self,
@@ -909,7 +640,7 @@ class DeviceSHFQA(DeviceSHFBase):
     ) -> NodeCollector:
         nc = NodeCollector(base=f"/{self.serial}/qachannels/{awg_index}/readout/")
 
-        uses_lrt = self._uses_lrt(device_uid, awg_index, recipe_data)
+        uses_lrt = ch_uses_lrt(device_uid, awg_index, recipe_data)
 
         max_len = MAX_INTEGRATION_WEIGHT_LENGTH
 
@@ -969,33 +700,12 @@ class DeviceSHFQA(DeviceSHFBase):
 
         return nc
 
-    def _integrator_has_consistent_msd_num_state(
-        self, integrator_allocation: IntegratorAllocation.Data
-    ):
-        num_states = integrator_allocation.kernel_count + 1
-        num_thresholds = len(integrator_allocation.thresholds)
-        num_expected_thresholds = (num_states - 1) * num_states // 2
-
-        def pluralize(n, noun):
-            return f"{n} {noun}{'s' if n > 1 else ''}"
-
-        if num_thresholds != num_expected_thresholds:
-            raise LabOneQControllerException(
-                f"Multi discrimination configuration of experiment is not consistent."
-                f" For {pluralize(num_states, 'state')}, I expected"
-                f" {pluralize(integrator_allocation.kernel_count, 'kernel')}"
-                f" and {pluralize(num_expected_thresholds, 'threshold')}, but got"
-                f" {pluralize(num_thresholds, 'threshold')}.\n"
-                "For n states, there should be n-1 kernels, and (n-1)*n/2 thresholds."
-            )
-
     def _configure_readout_mode_nodes_multi_state(
         self,
         integrator_allocation: IntegratorAllocation,
         measurement: Measurement,
     ) -> NodeCollector:
         num_states = integrator_allocation.kernel_count + 1
-        self._integrator_has_consistent_msd_num_state(integrator_allocation)
 
         assert len(integrator_allocation.channels) == 1, (
             f"{self.dev_repr}: Internal error - expected 1 integrator for "
@@ -1015,15 +725,13 @@ class DeviceSHFQA(DeviceSHFBase):
         nc.add(f"{qudit_path}/enable", 1, cache=False)
         nc.add(
             f"{qudit_path}/assignmentvec",
-            calc_theoretical_assignment_vec(num_states - 1),
+            _calc_theoretical_assignment_vec(num_states - 1),
         )
 
         return nc
 
     def _configure_readout_mode_nodes(
         self,
-        _dev_input: IO,
-        _dev_output: IO,
         measurement: Measurement | None,
         device_uid: str,
         recipe_data: RecipeData,
@@ -1044,7 +752,7 @@ class DeviceSHFQA(DeviceSHFBase):
                 or integrator_allocation.awg != measurement.channel
             ):
                 continue
-            if self._uses_lrt(device_uid, measurement.channel, recipe_data):
+            if ch_uses_lrt(device_uid, measurement.channel, recipe_data):
                 continue
             readout_nodes = self._configure_readout_mode_nodes_multi_state(
                 integrator_allocation, measurement
@@ -1054,7 +762,7 @@ class DeviceSHFQA(DeviceSHFBase):
         return nc
 
     def _configure_spectroscopy_mode_nodes(
-        self, dev_input: IO, measurement: Measurement | None
+        self, measurement: Measurement
     ) -> NodeCollector:
         _logger.debug("%s: Setting measurement mode to 'Spectroscopy'.", self.dev_repr)
 
@@ -1069,30 +777,10 @@ class DeviceSHFQA(DeviceSHFBase):
 
         return nc
 
-    def _uses_lrt(self, device_uid: str, channel: int, recipe_data: RecipeData) -> bool:
-        artifacts = recipe_data.get_artifacts(self._device_class, ArtifactsCodegen)
-        osc_signals = set(
-            o.signal_id
-            for o in recipe_data.recipe.oscillator_params
-            if o.device_id == device_uid and o.channel == channel
-        )
-        return (
-            len(
-                osc_signals.intersection(
-                    artifacts.requires_long_readout.get(device_uid, [])
-                )
-            )
-            > 0
-        )
-
-    async def collect_awg_before_upload_nodes(
-        self, initialization: Initialization, recipe_data: RecipeData
-    ) -> list[DaqNodeSetAction]:
+    async def set_before_awg_upload(self, recipe_data: RecipeData):
         nc = NodeCollector(base=f"/{self.serial}/")
 
-        acquisition_type = RtExecutionInfo.get_acquisition_type(
-            recipe_data.rt_execution_infos
-        )
+        acquisition_type = recipe_data.rt_execution_info.acquisition_type
 
         for channel in range(self._channels):
             nc.add(
@@ -1100,54 +788,32 @@ class DeviceSHFQA(DeviceSHFBase):
                 0 if is_spectroscopy(acquisition_type) else 1,
             )
 
+        initialization = recipe_data.get_initialization(self.uid)
         for measurement in initialization.measurements:
-            if self._uses_lrt(
-                initialization.device_uid, measurement.channel, recipe_data
-            ):
+            if ch_uses_lrt(initialization.device_uid, measurement.channel, recipe_data):
                 nc.add(f"qachannels/{measurement.channel}/modulation/enable", 1)
 
-            dev_input = next(
-                (
-                    inp
-                    for inp in initialization.inputs
-                    if inp.channel == measurement.channel
-                ),
-                None,
-            )
-            dev_output = next(
-                (
-                    output
-                    for output in initialization.outputs
-                    if output.channel == measurement.channel
-                ),
-                None,
-            )
             if is_spectroscopy(acquisition_type):
-                nc.extend(
-                    self._configure_spectroscopy_mode_nodes(dev_input, measurement)
-                )
+                nc.extend(self._configure_spectroscopy_mode_nodes(measurement))
             elif acquisition_type != AcquisitionType.RAW:
                 nc.extend(
                     self._configure_readout_mode_nodes(
-                        dev_input,
-                        dev_output,
                         measurement,
                         initialization.device_uid,
                         recipe_data,
                     )
                 )
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_trigger_configuration_nodes(
-        self, initialization: Initialization, recipe_data: RecipeData
-    ) -> list[DaqNodeSetAction]:
+    async def configure_trigger(self, recipe_data: RecipeData):
         _logger.debug("Configuring triggers...")
         self._wait_for_awgs = True
         self._emit_trigger = False
 
         nc = NodeCollector(base=f"/{self.serial}/")
 
+        initialization = recipe_data.get_initialization(self.uid)
         triggering_mode = initialization.config.triggering_mode
 
         if triggering_mode == TriggeringMode.ZSYNC_FOLLOWER:
@@ -1184,27 +850,28 @@ class DeviceSHFQA(DeviceSHFBase):
                 channel,
             )
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def on_experiment_begin(self) -> list[DaqNodeSetAction]:
-        if self._api is not None:
-            nodes = [
-                *(
-                    self._result_node_readout(awg, result_index)
-                    for awg in range(self._get_num_awgs())
-                    for result_index in range(self._integrators)
-                ),
-                *(
-                    self._result_node_spectroscopy(awg)
-                    for awg in range(self._get_num_awgs())
-                ),
-                *(self._result_node_scope(awg) for awg in range(self._get_num_awgs())),
-            ]
-            await _gather(
-                *(self._subscriber.subscribe(self._api, node) for node in nodes)
-            )
+    async def on_experiment_begin(self):
+        subscribe_qa_nodes = [
+            self._qachannels[ch].subscribe_nodes() for ch in self._allocated_awgs
+        ]
+        subscribe_scope_nodes = NodeCollector()
+        for ch in self._allocated_awgs:
+            subscribe_scope_nodes.add_path(self._result_node_scope(ch))
 
-        return await super().on_experiment_begin()
+        nodes = NodeCollector.all([*subscribe_qa_nodes, subscribe_scope_nodes])
+        await _gather(
+            super().on_experiment_begin(),
+            *(self._subscriber.subscribe(self._api, path) for path in nodes.paths()),
+        )
+
+    async def on_experiment_end(self):
+        await super().on_experiment_end()
+        nc = NodeCollector(base=f"/{self.serial}/")
+        # in CW spectroscopy mode, turn off the tone
+        nc.add("qachannels/*/spectroscopy/envelope/enable", 1, cache=False)
+        await self.set_async(nc)
 
     async def get_measurement_data(
         self,
@@ -1215,266 +882,60 @@ class DeviceSHFQA(DeviceSHFBase):
         num_results: int,
         hw_averages: int,
     ) -> RawReadoutData:
-        impl = (
-            self.get_measurement_data_sync
-            if self._api is None
-            else self.get_measurement_data_async
-        )
-        return await impl(
-            recipe_data,
-            channel,
-            rt_execution_info,
-            result_indices,
-            num_results,
-            hw_averages,
-        )
-
-    async def get_measurement_data_async(
-        self,
-        recipe_data: RecipeData,
-        channel: int,
-        rt_execution_info: RtExecutionInfo,
-        result_indices: list[int],
-        num_results: int,
-        hw_averages: int,
-    ) -> RawReadoutData:
-        assert len(result_indices) == 1
-        result_path = (
-            self._result_node_spectroscopy(channel)
-            if is_spectroscopy(rt_execution_info.acquisition_type)
-            else self._result_node_readout(channel, result_indices[0])
-        )
-        ch_repr = (
-            f"{self.dev_repr}:ch{channel}:spectroscopy"
-            if is_spectroscopy(rt_execution_info.acquisition_type)
-            else f"{self.dev_repr}:ch{channel}:readout{result_indices[0]}"
-        )
-
-        pipeliner_jobs = rt_execution_info.pipeliner_jobs
-
-        rt_result = RawReadoutData(
-            np.full(pipeliner_jobs * num_results, np.nan, dtype=np.complex128)
-        )
-        jobs_processed: set[int] = set()
-
-        expected_job_id = 0  # TODO(2K): For compatibility with 23.10
-
         # TODO(2K): set timeout based on timeout_s from connect
         timeout_s = 5
-        try:
-            while True:
-                if len(jobs_processed) == pipeliner_jobs:
-                    break
-                node_data = await self._subscriber.get(result_path, timeout_s=timeout_s)
-                job_result = node_data.value
-                properties = canonical_properties(job_result.properties)
 
-                job_id = properties["jobid"]
-                expected_job_id += 1
-                if job_id in jobs_processed:
-                    _logger.error(
-                        f"{ch_repr}: Ignoring duplicate job id {job_id} in the results."
-                    )
-                    continue
-                if job_id >= pipeliner_jobs:
-                    _logger.error(
-                        f"{ch_repr}: Ignoring job id {job_id} in the results, as it "
-                        f"falls outside the defined range of {pipeliner_jobs} jobs."
-                    )
-                    continue
-                jobs_processed.add(job_id)
-
-                num_samples = properties.get("numsamples", num_results)
-
-                if num_samples != num_results:
-                    _logger.error(
-                        f"{ch_repr}: The number of measurements acquired ({num_samples}) "
-                        f"does not match the number of measurements defined ({num_results}). "
-                        "Possibly the time between measurements within a loop is too short, "
-                        "or the measurement was not started."
-                    )
-
-                valid_samples = min(num_results, num_samples)
-                np.put(
-                    rt_result.vector,
-                    range(job_id * num_results, job_id * num_results + valid_samples),
-                    job_result.vector[:valid_samples],
-                    mode="clip",
-                )
-
-                timestamp_clock_cycles = properties["firstSampleTimestamp"]
-                rt_result.metadata.setdefault(job_id, {})["timestamp"] = (
-                    timestamp_clock_cycles * TIME_STAMP_TIMEBASE
-                )
-        except TimeoutError:
-            _logger.error(
-                f"{ch_repr}: Failed to receive all results within {timeout_s} s, timing out."
+        if is_spectroscopy(rt_execution_info.acquisition_type):
+            return await self._qachannels[channel].get_spectroscopy_data(
+                pipeliner_jobs=rt_execution_info.pipeliner_jobs,
+                num_results=num_results,
+                timeout_s=timeout_s,
             )
 
-        missing_jobs = set(range(pipeliner_jobs)) - jobs_processed
-        if len(missing_jobs) > 0:
-            _logger.error(
-                f"{ch_repr}: Results for job id(s) {missing_jobs} are missing."
-            )
-
-        if rt_execution_info.acquisition_type == AcquisitionType.DISCRIMINATION:
-            rt_result.vector = rt_result.vector.real
-        return rt_result
-
-    async def get_measurement_data_sync(
-        self,
-        recipe_data: RecipeData,
-        channel: int,
-        rt_execution_info: RtExecutionInfo,
-        result_indices: list[int],
-        num_results: int,
-        hw_averages: int,
-    ) -> RawReadoutData:
         assert len(result_indices) == 1
-        result_path = (
-            self._result_node_spectroscopy(channel)
-            if is_spectroscopy(rt_execution_info.acquisition_type)
-            else self._result_node_readout(channel, result_indices[0])
+        rt_result = await self._qachannels[channel].get_readout_data(
+            pipeliner_jobs=rt_execution_info.pipeliner_jobs,
+            num_results=num_results,
+            timeout_s=timeout_s,
+            integrator=result_indices[0],
         )
-        ch_repr = (
-            f"{self.dev_repr}:ch{channel}:spectroscopy"
-            if is_spectroscopy(rt_execution_info.acquisition_type)
-            else f"{self.dev_repr}:ch{channel}:readout{result_indices[0]}"
-        )
-
-        pipeliner_jobs = rt_execution_info.pipeliner_jobs
-
-        rt_result = RawReadoutData(
-            np.full(pipeliner_jobs * num_results, np.nan, dtype=np.complex128)
-        )
-        jobs_processed: set[int] = set()
-
-        expected_job_id = 0  # TODO(2K): For compatibility with 23.10
-
-        read_result_timeout_s = 5
-        last_result_received = None
-        while True:
-            job_result = self.node_monitor.pop(result_path)
-            if job_result is None:
-                if len(jobs_processed) == pipeliner_jobs:
-                    break
-                now = time.monotonic()
-                if last_result_received is None:
-                    last_result_received = now
-                if now - last_result_received > read_result_timeout_s:
-                    _logger.error(
-                        f"{ch_repr}: Failed to receive all results within {read_result_timeout_s} s, timing out."
-                    )
-                    break
-                await asyncio.sleep(0.1)
-                await self.node_monitor.poll()
-                continue
-            else:
-                last_result_received = None
-
-            job_id = job_result["properties"]["jobid"]
-            expected_job_id += 1
-            if job_id in jobs_processed:
-                _logger.error(
-                    f"{ch_repr}: Ignoring duplicate job id {job_id} in the results."
-                )
-                continue
-            if job_id >= pipeliner_jobs:
-                _logger.error(
-                    f"{ch_repr}: Ignoring job id {job_id} in the results, as it "
-                    f"falls outside the defined range of {pipeliner_jobs} jobs."
-                )
-                continue
-            jobs_processed.add(job_id)
-
-            num_samples = job_result["properties"].get("numsamples", num_results)
-
-            if num_samples != num_results:
-                _logger.error(
-                    f"{ch_repr}: The number of measurements acquired ({num_samples}) "
-                    f"does not match the number of measurements defined ({num_results}). "
-                    "Possibly the time between measurements within a loop is too short, "
-                    "or the measurement was not started."
-                )
-
-            valid_samples = min(num_results, num_samples)
-            np.put(
-                rt_result.vector,
-                range(job_id * num_results, job_id * num_results + valid_samples),
-                job_result["vector"][:valid_samples],
-                mode="clip",
-            )
-
-            timestamp_clock_cycles = job_result["properties"]["firstSampleTimestamp"]
-            rt_result.metadata.setdefault(job_id, {})["timestamp"] = (
-                timestamp_clock_cycles * TIME_STAMP_TIMEBASE
-            )
-
-        missing_jobs = set(range(pipeliner_jobs)) - jobs_processed
-        if len(missing_jobs) > 0:
-            _logger.error(
-                f"{ch_repr}: Results for job id(s) {missing_jobs} are missing."
-            )
-
         if rt_execution_info.acquisition_type == AcquisitionType.DISCRIMINATION:
             rt_result.vector = rt_result.vector.real
         return rt_result
-
-    async def get_input_monitor_data(
-        self, channel: int, num_results: int
-    ) -> RawReadoutData:
-        impl = (
-            self._get_input_monitor_data_sync
-            if self._api is None
-            else self._get_input_monitor_data_async
-        )
-        return await impl(channel, num_results)
 
     def _ch_repr_scope(self, ch: int) -> str:
         return f"{self.dev_repr}:scope:ch{ch}"
 
-    async def _get_input_monitor_data_async(
-        self, channel: int, num_results: int
+    async def get_raw_data(
+        self, channel: int, acquire_length: int, acquires: int | None
     ) -> RawReadoutData:
         result_path = self._result_node_scope(channel)
         # TODO(2K): set timeout based on timeout_s from connect
         timeout_s = 5.0
+        # Segment lengths are always multiples of 16 samples.
+        segment_length = (acquire_length + 0xF) & (~0xF)
+        if acquires is None:
+            acquires = 1
         try:
-            node_data = await self._subscriber.get(result_path, timeout_s=timeout_s)
-            node_val = node_data.value.vector
-            return RawReadoutData(node_val[0:num_results])
-        except TimeoutError:
+            raw_result = await self._subscriber.get_result(
+                result_path, timeout_s=timeout_s
+            )
+            raw_data = np.reshape(raw_result.vector, (acquires, segment_length))
+        except (TimeoutError, asyncio.TimeoutError):
             _logger.error(
                 f"{self._ch_repr_scope(channel)}: Failed to receive a result from {result_path} within {timeout_s} seconds."
             )
-            return RawReadoutData(np.array([], dtype=np.complex128))
+            raw_data = np.full((acquires, segment_length), np.nan, dtype=np.complex128)
+        return RawReadoutData(raw_data)
 
-    async def _get_input_monitor_data_sync(
-        self, channel: int, num_results: int
-    ) -> RawReadoutData:
-        result_path_ch = self._result_node_scope(channel)
-        read_result_timeout_s = 5
-        last_result_received = None
-        while True:
-            node_data = self.node_monitor.pop(result_path_ch)
-            if node_data is not None:
-                data = node_data["vector"][0:num_results]
-                return RawReadoutData(data)
-            now = time.monotonic()
-            if last_result_received is None:
-                last_result_received = now
-            if now - last_result_received > read_result_timeout_s:
-                _logger.error(
-                    f"{self._ch_repr_scope(channel)}: Failed to receive all raw results within {read_result_timeout_s} s, timing out."
-                )
-                return RawReadoutData(np.array([], dtype=np.complex128))
-            await asyncio.sleep(0.1)
-            await self.node_monitor.poll()
-
-    async def collect_reset_nodes(self) -> list[DaqNodeSetAction]:
+    async def reset_to_idle(self):
+        await super().reset_to_idle()
         nc = NodeCollector(base=f"/{self.serial}/")
         # Reset pipeliner first, attempt to set generator enable leads to FW error if pipeliner was enabled.
-        nc.extend(self._pipeliner.reset_nodes())
+        nc.add("qachannels/*/pipeliner/reset", 1, cache=False)
+        nc.add("qachannels/*/pipeliner/mode", 0, cache=False)  # off
+        nc.add("qachannels/*/synchronization/enable", 0, cache=False)
+        nc.barrier()
         nc.add("qachannels/*/generator/enable", 0, cache=False)
         nc.add("system/synchronization/source", 0, cache=False)  # internal
         if self.options.is_qc:
@@ -1494,9 +955,7 @@ class DeviceSHFQA(DeviceSHFBase):
         nc.add("qachannels/*/oscs/*/gain", 1.0, cache=False)
         nc.add("scopes/0/enable", 0, cache=False)
         nc.add("scopes/0/channels/*/enable", 0, cache=False)
-        reset_nodes = await super().collect_reset_nodes()
-        reset_nodes.extend(await self.maybe_async(nc))
-        return reset_nodes
+        await self.set_async(nc)
 
     def _collect_warning_nodes(self) -> list[tuple[str, str]]:
         warning_nodes = []

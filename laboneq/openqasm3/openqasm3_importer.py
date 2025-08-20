@@ -7,9 +7,10 @@ import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
+import re
 import openpulse
 from openpulse import ast
-
+from laboneq.core.path import remove_logical_signal_prefix
 from laboneq.dsl.enums import (
     AcquisitionType,
     AveragingMode,
@@ -102,30 +103,24 @@ class OpenQasm3Importer:
         self,
         text: str,
     ) -> Section:
-        text = self._preprocess(text)
-        tree = self._parse_valid_tree(text)
+        tree = self.program_to_ast(text)
         try:
-            ret = self.transpile(tree, uid_hint="root")
-
+            return self.transpile(tree, uid_hint="root")
         except OpenQasmException as e:
             e.source = text
             raise
-        return ret
 
-    def _parse_valid_tree(self, text) -> ast.Program:
+    def program_to_ast(self, text: str) -> ast.Program:
+        """Convert OpenQASM program into an AST tree."""
+        text = self._preprocess(text)
         tree = openpulse.parse(text)
         assert isinstance(tree, ast.Program)
         return tree
 
     def _workaround_extern_port(self, text: str) -> str:
-        new_text = ""
-        for line in text.splitlines():
-            if line.strip().startswith("extern port "):
-                name = line.strip().split(" ")[2]
-                self.scope.current.declare_classical_value(name, 0)
-            else:
-                new_text += line + "\n"
-        return new_text
+        # NOTE: 'extern port' declaration is not yet supported by the openpulse parser.
+        pattern = r"extern port (\S+);"
+        return re.sub(pattern, r"port \1;", text)
 
     def _preprocess(self, text: str) -> str:
         return self._workaround_extern_port(text)
@@ -142,16 +137,14 @@ class OpenQasm3Importer:
             externs=self.supplied_externs,
             namespace=self.scope,
         )
-        # TODO: Refactor tests to not relying on importer.scope
-        self.debug_scope = visitor.namespace
-
         return visitor.transpile(parent, uid_hint=uid_hint)
 
 
 def _port_from_logical_signal_path(ls: str) -> device.Port:
     """Turn absolute logical signal path into a port."""
-    parts = ls.lstrip("/").split("/")
-    qubit = parts[1]
+    ls = remove_logical_signal_prefix(ls)
+    parts = ls.split("/")
+    qubit = parts[0]
     return device.port(qubit, ls)
 
 
@@ -176,7 +169,7 @@ def exp_from_qasm(
         program:
             OpenQASM program
         qubits:
-            Map from OpenQASM qubit names to LabOne Q DSL Qubit objects
+            Map from OpenQASM qubit names to LabOne Q DSL QuantumElement objects
         gate_store:
             Map from OpenQASM gate names to LabOne Q DSL Gate objects
         inputs:
@@ -216,7 +209,7 @@ def exp_from_qasm(
 
     transpiler = OpenQASMTranspiler(
         qpu=QPU(
-            qubits=list(qubits.values()),
+            quantum_elements=list(qubits.values()),
             quantum_operations=_GateStoreQuantumOperations(gate_store, qubits),
         )
     )
@@ -255,6 +248,7 @@ def exp_from_qasm_list(
     batch_execution_mode: str = "pipeline",
     do_reset: bool = False,
     add_measurement: bool = True,
+    add_measurement_handle: str = "{qubit.uid}",
     pipeline_chunk_count: int | None = None,
 ) -> Experiment:
     """
@@ -289,7 +283,7 @@ def exp_from_qasm_list(
         programs:
             the list of the QASM snippets
         qubits:
-            Map from OpenQASM qubit names to LabOne Q DSL Qubit objects
+            Map from OpenQASM qubit names to LabOne Q DSL QuantumElement objects
         gate_store:
             Map from OpenQASM gate names to LabOne Q DSL Gate objects
         inputs:
@@ -321,6 +315,9 @@ def exp_from_qasm_list(
             If `True`,  an active reset operation is added to the beginning of each program.
         add_measurement:
             If `True`, add measurement at the end for all qubits used.
+        add_measurement_handle:
+            A template for the handles of measurements added when `add_measurement` is true.
+            Defaults to `{qubit.uid}`, i.e. just the qubit UID.
         pipeline_chunk_count:
             The number of pipeline chunks to divide the experiment into.
 
@@ -348,7 +345,7 @@ def exp_from_qasm_list(
 
     transpiler = OpenQASMTranspiler(
         qpu=QPU(
-            qubits=list(qubits.values()),
+            quantum_elements=list(qubits.values()),
             quantum_operations=_GateStoreQuantumOperations(gate_store, qubits),
         )
     )
@@ -373,6 +370,7 @@ def exp_from_qasm_list(
             batch_execution_mode=batch_execution_mode,
             add_reset=do_reset,
             add_measurement=add_measurement,
+            add_measurement_handle=add_measurement_handle,
             pipeline_chunk_count=pipeline_chunk_count,
         ),
     )

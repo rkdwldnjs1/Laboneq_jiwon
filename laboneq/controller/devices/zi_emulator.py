@@ -217,6 +217,10 @@ class DevEmu(ABC):
         return new_node
 
     def _get_node(self, dev_path: str) -> NodeBase:
+        if len(dev_path) == 0:
+            # Generally, unknown nodes are implicitly created in emulation,
+            # but empty path is a clear error - raise to improve test coverage.
+            raise ValueError("Empty path is not allowed")
         node = self._node_tree.get(dev_path)
         if node is None:
             node = self._make_node(dev_path)
@@ -417,14 +421,9 @@ class DevEmuZI(DevEmu):
 
     def _node_def(self) -> dict[str, NodeInfo]:
         return {
-            "about/version": NodeInfo(
+            "about/fullversion": NodeInfo(
                 type=NodeType.STR,
-                default=self._dev_opts.get("about/version", "99.99"),
-                read_only=True,
-            ),
-            "about/revision": NodeInfo(
-                type=NodeType.INT,
-                default=self._dev_opts.get("about/revision", 99999),
+                default=self._dev_opts.get("about/fullversion", "99.99.9.9999"),
                 read_only=True,
             ),
             "about/dataserver": NodeInfo(
@@ -445,15 +444,8 @@ class DevEmuHW(DevEmu):
         self._set_val("system/preset/busy", 1)
         for p in self._node_tree.keys():
             if p not in ["system/preset/load", "system/preset/busy"]:
-                node_info = self._cached_node_def().get(p)
-                self._set_val(
-                    p,
-                    0
-                    if node_info is None
-                    else node_info.type.value()._value
-                    if node_info.default is None
-                    else node_info.default,
-                )
+                # set all nodes to their default values
+                self._set_val(p, self._make_node(p).value)
         self.schedule(delay=0.001, action=self._preset_loaded)
 
     def _node_def_common(self) -> dict[str, NodeInfo]:
@@ -676,8 +668,13 @@ class DevEmuUHFQA(DevEmuHW):
                 )
         if monitor_enable != 0:
             length = self._get_node("qas/0/monitor/length").value
-            self._set_val("qas/0/monitor/inputs/0/wave", ([52] * length, {}))
-            self._set_val("qas/0/monitor/inputs/1/wave", ([52] * length, {}))
+            self._set_val(
+                "qas/0/monitor/inputs/0/wave", (np.arange(length, dtype=np.float64), {})
+            )
+            self._set_val(
+                "qas/0/monitor/inputs/1/wave",
+                (-np.arange(length, dtype=np.float64), {}),
+            )
 
     def _awg_enable(self, node: NodeBase):
         self._armed_awg = node.value != 0
@@ -718,6 +715,42 @@ class DevEmuUHFQA(DevEmuHW):
 
 
 class Gen2Base(DevEmuHW):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._busy: dict[int, int] = defaultdict(int)
+
+    def _busy_node(self, channel: int) -> str:
+        # Implement in derived classes that support busy flag and configure nodes
+        # with _assert_busy handler.
+        raise NotImplementedError("busy flag is not supported for this device")
+
+    def _assert_busy(self, node: NodeBase, channel: int):
+        # Busy should only be asserted if the originating node value is being changed,
+        # however this requires extra logic to track the previous value. For our testing
+        # purposes, we will simply assert busy on every set.
+        if self._busy[channel] == 0:
+            self.set(self._busy_node(channel), 1)
+        self._busy[channel] += 1
+        self.schedule(
+            delay=self._dev_opts.get(
+                f"{self._busy_node(channel)}/deassert_delay_s", 0.001
+            ),
+            action=self._deassert_busy,
+            argument=(channel,),
+        )
+
+    def _deassert_busy(self, channel: int):
+        if self._busy[channel] > 0:
+            self._busy[channel] -= 1
+        else:
+            _logger.warning(
+                "Event counter for /%d/%d is already 0 on deassertion.",
+                self.serial(),
+                self._busy_node(channel),
+            )
+        if self._busy[channel] == 0:
+            self.set(self._busy_node(channel), 0)
+
     def _ref_clock_switched(self, requested_source: int):
         # 0 - INTERNAL
         # 1 - EXTERNAL
@@ -840,12 +873,17 @@ class DevEmuSHFQABase(DevEmuSHFBase):
             pipeliner_stop_hook=self._pipeliner_done,
         )
         self._armed_qa_awgs: set[int] = set()
+        self._scope_max_segments: int = 1024
+        self._scope_memory_size: int = 256 * 1024
 
     def trigger(self):
         super().trigger()
         for channel in self._armed_qa_awgs:
             self._awg_stop_qa(channel)
         self._armed_qa_awgs.clear()
+
+    def _busy_node(self, channel: int) -> str:
+        return f"qachannels/{channel}/busy"
 
     def _make_measurement_properties(self, job_id=0):
         return {
@@ -955,13 +993,51 @@ class DevEmuSHFQABase(DevEmuSHFBase):
             if scope_single != 0:
                 self._set_val("scopes/0/enable", 0)
             length = self._get_node("scopes/0/length").value
-            assert isinstance(length, int)
-            length &= ~0xF
-            for scope_ch in range(4):
+            enabled_channels = self._scope_enabled_channels()
+            segments = self._scope_segments()
+
+            # Emulate the scope output using structured data that allows tracking
+            # of the results assignment. Each sample value is calculated as
+            # <segment> * 10 + <channel> + <sample> * 1j
+            segment_samples = np.arange(length) * 1j
+            for scope_ch in enabled_channels:
+                data = [
+                    segment * 10 + scope_ch + segment_samples
+                    for segment in range(segments)
+                ]
                 self._set_val(
-                    f"scopes/0/channels/{scope_ch}/wave",
-                    (np.array([(52 + 52j)] * length), {}),
+                    f"scopes/0/channels/{scope_ch}/wave", (np.concatenate(data), {})
                 )
+
+    def _scope_enabled_channels(self) -> list[int]:
+        return [
+            scope_ch
+            for scope_ch in range(4)
+            if self._get_node(f"scopes/0/channels/{scope_ch}/enable").value != 0
+        ]
+
+    def _scope_segments(self) -> int:
+        if self._get_node("scopes/0/segments/enable").value != 0:
+            return self._get_node("scopes/0/segments/count").value
+        return 1
+
+    def _scope_adjust_segments(self, node: NodeBase):
+        if self._scope_segments() > self._scope_max_segments:
+            self._set_val("scopes/0/segments/count", self._scope_max_segments)
+        self._scope_adjust_length(node)
+
+    def _scope_adjust_length(self, node: NodeBase):
+        enabled_channels = self._scope_enabled_channels()
+        if len(enabled_channels) < 2:
+            ch_split = 1
+        elif len(enabled_channels) == 2:
+            ch_split = 2
+        else:
+            ch_split = 4
+        segments = self._scope_segments()
+        max_length = (self._scope_memory_size // ch_split // segments) & ~0xF
+        if self._get_node("scopes/0/length").value > max_length:
+            self._set_val("scopes/0/length", max_length)
 
     def _awg_stop_qa(self, channel: int):
         self._side_effects_qa(channel)
@@ -1061,10 +1137,47 @@ class DevEmuSHFQABase(DevEmuSHFBase):
             nd[f"qachannels/{channel}/spectroscopy/result/data/wave"] = NodeInfo(
                 type=NodeType.VECTOR_COMPLEX
             )
-            for scope_ch in range(4):
-                nd[f"scopes/0/channels/{scope_ch}/wave"] = NodeInfo(
-                    type=NodeType.VECTOR_COMPLEX
-                )
+
+            nd[f"qachannels/{channel}/centerfreq"] = NodeInfo(
+                type=NodeType.FLOAT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/output/on"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/output/range"] = NodeInfo(
+                type=NodeType.FLOAT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/output/rflfinterlock"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/output/rflfpath"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/input/range"] = NodeInfo(
+                type=NodeType.FLOAT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"qachannels/{channel}/input/rflfpath"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+
+        nd["scopes/0/length"] = NodeInfo(
+            type=NodeType.INT, default=4992, handler=self._scope_adjust_length
+        )
+        nd["scopes/0/segments/enable"] = NodeInfo(
+            type=NodeType.INT, default=0, handler=self._scope_adjust_length
+        )
+        nd["scopes/0/segments/count"] = NodeInfo(
+            type=NodeType.INT, default=1, handler=self._scope_adjust_segments
+        )
+        for scope_ch in range(4):
+            nd[f"scopes/0/channels/{scope_ch}/enable"] = NodeInfo(
+                type=NodeType.INT,
+                default=1 if scope_ch == 0 else 0,
+                handler=self._scope_adjust_length,
+            )
+            nd[f"scopes/0/channels/{scope_ch}/wave"] = NodeInfo(
+                type=NodeType.VECTOR_COMPLEX
+            )
         return nd
 
 
@@ -1095,11 +1208,45 @@ class DevEmuSHFSGBase(DevEmuSHFBase):
         )
         self._armed_sg_awgs: set[int] = set()
 
+        default_devtype, default_options = self.default_dev_opts()
+        self.devtype = self._dev_opts.get("features/devtype", default_devtype)
+        self.options = self._dev_opts.get("features/options", default_options)
+
+        if self.devtype == "SHFSG8":
+            self._output_to_synth_map = [0, 0, 1, 1, 2, 2, 3, 3]
+        elif self.devtype == "SHFSG4":
+            self._output_to_synth_map = [0, 1, 2, 3]
+        elif self.devtype == "SHFQC":
+            assert isinstance(self.options, str)
+            options_list = self.options.split("\n")
+            # Different numbering on SHFQC - index 0 are QA synths
+            if "QC2CH" in options_list:
+                self._output_to_synth_map = [1, 1]
+            elif "QC4CH" in options_list:
+                self._output_to_synth_map = [1, 1, 2, 2]
+            elif "QC6CH" in options_list:
+                self._output_to_synth_map = [1, 1, 2, 2, 3, 3]
+            else:
+                raise AssertionError("Invalid SHFQC options")
+        else:
+            raise AssertionError("Invalid device type")
+
+    @abstractmethod
+    def default_dev_opts(self) -> tuple[str, str]: ...
+
     def trigger(self):
         super().trigger()
         for channel in self._armed_sg_awgs:
             self._awg_stop_sg(channel)
         self._armed_sg_awgs.clear()
+
+    def _busy_node(self, channel: int) -> str:
+        return f"sgchannels/{channel}/busy"
+
+    def _assert_busy_for_synthesizer(self, node: NodeBase, synthesizer: int):
+        for channel, synth in enumerate(self._output_to_synth_map):
+            if synth == synthesizer:
+                self._assert_busy(node, channel=channel)
 
     def _side_effects_sg(self, channel: int):
         out_ovr_node = f"sgchannels/{channel}/output/overrangecount"
@@ -1132,37 +1279,51 @@ class DevEmuSHFSGBase(DevEmuSHFBase):
             nd[f"sgchannels/{channel}/output/overrangecount"] = NodeInfo(
                 type=NodeType.INT, default=0
             )
+            nd[f"sgchannels/{channel}/output/on"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"sgchannels/{channel}/output/range"] = NodeInfo(
+                type=NodeType.FLOAT, handler=partial(self._assert_busy, channel=channel)
+            )
+            nd[f"sgchannels/{channel}/output/rflfpath"] = NodeInfo(
+                type=NodeType.INT, handler=partial(self._assert_busy, channel=channel)
+            )
+        for synthesizer in range(4):
+            nd[f"synthesizers/{synthesizer}/centerfreq"] = NodeInfo(
+                type=NodeType.FLOAT,
+                handler=partial(
+                    self._assert_busy_for_synthesizer, synthesizer=synthesizer
+                ),
+            )
         return nd
 
 
 class DevEmuSHFSG(DevEmuSHFSGBase):
+    def default_dev_opts(self) -> tuple[str, str]:
+        return "SHFSG8", ""
+
     def _node_def(self) -> dict[str, NodeInfo]:
         nd = {
-            "features/devtype": NodeInfo(
-                type=NodeType.STR,
-                default=self._dev_opts.get("features/devtype", "SHFSG8"),
-            ),
-            "features/options": NodeInfo(
-                type=NodeType.STR,
-                default=self._dev_opts.get("features/options", ""),
-            ),
+            "features/devtype": NodeInfo(type=NodeType.STR, default=self.devtype),
+            "features/options": NodeInfo(type=NodeType.STR, default=self.options),
         }
         nd.update(self._node_def_shf())
         nd.update(self._node_def_sg())
         return nd
 
 
-class DevEmuSHFQC(DevEmuSHFQABase, DevEmuSHFSGBase):
+class DevEmuSHFQC(DevEmuSHFSGBase, DevEmuSHFQABase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._scope_memory_size = 64 * 1024
+
+    def default_dev_opts(self) -> tuple[str, str]:
+        return "SHFQC", "QC6CH"
+
     def _node_def(self) -> dict[str, NodeInfo]:
         nd = {
-            "features/devtype": NodeInfo(
-                type=NodeType.STR,
-                default=self._dev_opts.get("features/devtype", "SHFQC"),
-            ),
-            "features/options": NodeInfo(
-                type=NodeType.STR,
-                default=self._dev_opts.get("features/options", "QC6CH"),
-            ),
+            "features/devtype": NodeInfo(type=NodeType.STR, default=self.devtype),
+            "features/options": NodeInfo(type=NodeType.STR, default=self.options),
         }
         nd.update(self._node_def_shf())
         nd.update(self._node_def_qa())
@@ -1272,7 +1433,8 @@ class EmulatorState:
         dev_type = _dev_type_map.get(self.get_device_type(serial), DevEmuNONQC)
         # if dev_type is None:
         #     dev_type = _serial_to_device_type(serial)
-        device = self._get_device_by_serial(serial)
+        device = self.get_device_by_serial(serial)
+        events: dict[str, list[PollEvent]]
         if device is None:
             device = dev_type(serial=serial, emulator_state=self)
             events = defaultdict(list)
@@ -1284,7 +1446,7 @@ class EmulatorState:
             events = self._events[serial]
         return device, events
 
-    def _get_device_by_serial(self, serial: str) -> DevEmu | None:
+    def get_device_by_serial(self, serial: str) -> DevEmu | None:
         dev_ref = self._devices.get(serial)
         if dev_ref is None:
             return None
@@ -1572,6 +1734,7 @@ class MockDataQueue:
         pass
 
 
+DUMP_TO_NODE_LOGGER_FROM_EMULATOR = False
 ASYNC_EMULATE_CACHE = False
 
 
@@ -1582,6 +1745,9 @@ class KernelSessionEmulator:
         self._emulator_state = emulator_state
         self._device, self._events = emulator_state.make_device(serial)
         self._cache: dict[str, Any] = {}
+
+    def clear_cache(self):  # TODO(2K): Remove once legacy API is gone
+        self._cache.clear()
 
     def dev_path(self, path: str) -> str:
         if path.startswith("/"):
@@ -1603,6 +1769,27 @@ class KernelSessionEmulator:
     ) -> list[str]:
         self._progress_scheduler()
         return []
+
+    def _log_to_node(self, method: str, path: str, value: Any):
+        zi_dev = self._emulator_state.get_device_by_serial("ZI")
+        if zi_dev is not None:
+            if value is None:
+                log_value = ""
+            elif isinstance(value, (int, float)):
+                log_value = f" value={value}"
+            elif isinstance(value, str):
+                if path.endswith("/data"):
+                    log_value = ' value="vector (?? B)"'
+                else:
+                    log_value = f" value={value}"
+            elif isinstance(value, (np.ndarray, bytes)):
+                log_value = ' value="vector (?? B)"'
+            else:
+                log_value = ' value="<unexpected type>"'
+            zi_dev.set(
+                "debug/log",
+                f'tracer="blocks_out" path="{path}" method="{method}"{log_value}',
+            )
 
     def _log_for_testing(self, value: MockAnnotatedValue):
         def _equal(cached, actual) -> bool:
@@ -1633,6 +1820,8 @@ class KernelSessionEmulator:
             else:
                 self._cache[value.path] = effective_value
 
+        # Handle ShfGeneratorWaveformVectorData type
+        effective_value = getattr(effective_value, "complex", effective_value)
         if isinstance(effective_value, (int, float, complex, str)):
             log_repr = f"{effective_value}"
         elif isinstance(effective_value, np.ndarray):
@@ -1653,9 +1842,11 @@ class KernelSessionEmulator:
         else:
             log_repr = None
         if log_repr is not None:
-            _node_logger.debug(
-                f"set {value.path} {log_repr}", extra={"node_value": value.value}
-            )
+            if DUMP_TO_NODE_LOGGER_FROM_EMULATOR:
+                _node_logger.debug(
+                    f"set {value.path} {log_repr}", extra={"node_value": value.value}
+                )
+            self._log_to_node("set", value.path, value.value)
 
     async def set(self, value: MockAnnotatedValue) -> MockAnnotatedValue:
         self._progress_scheduler()
@@ -1678,7 +1869,9 @@ class KernelSessionEmulator:
         path: str,
     ) -> MockAnnotatedValue:
         self._progress_scheduler()
-        _node_logger.debug(f"get {path} -")
+        if DUMP_TO_NODE_LOGGER_FROM_EMULATOR:
+            _node_logger.debug(f"get {path} -")
+        self._log_to_node("get", path, None)
         value = self._device.get(self.dev_path(path))
         return make_annotated_value(path=path, value=value)
 
@@ -1688,22 +1881,10 @@ class KernelSessionEmulator:
         for ev in events:
             self._events[ev.path].append(ev.value)
 
-    async def subscribe(self, path: str, get_initial_value: bool = False):
+    async def subscribe(self, path: str, get_initial_value: bool = False, **kwargs):
         self._progress_scheduler()
         dev_path = self.dev_path(path)
         self._device.subscribe(dev_path)
         if get_initial_value:
             self._device.getAsEvent(dev_path)
         return MockDataQueue(path, self)
-
-
-class MockInstrument:
-    def __init__(self, serial: str, emulator_state: EmulatorState):
-        self._session = KernelSessionEmulator(serial, emulator_state)
-
-    @property
-    def kernel_session(self) -> KernelSessionEmulator:
-        return self._session
-
-    def clear_cache(self):  # TODO(2K): Remove once legacy API is gone
-        self.kernel_session._cache.clear()

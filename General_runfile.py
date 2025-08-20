@@ -16,7 +16,9 @@ from laboneq.contrib.example_helpers.generate_device_setup import (
 # LabOne Q:
 from laboneq.simple import *
 
-from General_functions import *
+# from Basic_qubit_characterization import Basic_qubit_characterization_experiments
+
+from Bosonic_experiments import Bosonic_experiments
 
 from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect import (
     pulse_update,
@@ -132,26 +134,26 @@ qubits_parameters = {
 
         #port 1 (7-1)
 
-        "ge_frequency" : 4.388294e9 + 9.2e6,
+        "ge_frequency" : 4.388294e9 + 9.2e6 - 0.038e6 - 0.014e6,
         "ef_frequency" : 4.4017e9, #4.275e9, #4.3865e9,
-        "readout_frequency" : 7.664574e9-0.7e6, 
+        "readout_frequency" : 7.664574e9-0.8e6, 
         ### readout parameters ###
-        "readout_amp" : 0.17, #0.18,
+        "readout_amp" : 0.13, #0.18,
         'readout_pulse_length': 1800e-9,
         "readout_integration_length": 1600e-9,
         "readout_integration_amp": 1,
-        "readout_phase": (-60) * np.pi/180,
+        "readout_phase": (-90) * np.pi/180,
         ### drive parameters ###
         "drive_amp" : 0.387, 
         "drive_pulse_length": 64e-9,
         "drive_beta": 0.0,
         
         "pi2_length": 64e-9,
-        "pi2_amp": 0.192,
+        "pi2_amp": 0.193,
         "pi2_beta": 0.0,
 
         "pi_length": 64e-9,
-        "pi_amp": 0.384,
+        "pi_amp": 0.386,
         "pi_beta": 0.0,
 
         "cond_pi_length": 1024e-9,
@@ -175,7 +177,7 @@ qubits_parameters = {
 
         #port 1 (8-2)
         ### frequency parameters ###
-        "ge_frequency" : 4.02e9 + 0.1e6, #3.77e9+120e6,
+        "ge_frequency" : 4.0e9, #3.77e9+120e6,
         "ef_frequency" : 4.023e9, #4.275e9, #4.3865e9,
         "readout_frequency" :7.658013e9-0.2e6, 
         ### readout parameters ###
@@ -264,17 +266,25 @@ cavity_parameters = {
         "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
         "cavity_drive_amp": 0.1, #(this is the maximum amplitude range, and this goes to amp of experiment)
         "alpha_1_cavity_drive_amp": 0.1027, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
-        "reset_delay_length": 300e-6,
 
-        "cond_disp_pulse_length": 200e-9, #200e-9,
+        "cond_disp_pulse_length": 240e-9, #200e-9,
         "cond_disp_pulse_amp": 0.8, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_CNOD_amp": 0.4897, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+        "alpha_1_CNOD_amp": 0.2755, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
 
         # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
         "cavity_mode_chi": -0.082e6, #-0.824e6,
         "cond_disp_pulse_frequency": -0.082e6, # driving only cavity mode of ground state in driving freq(mode_frequency) frame.
         "cond_disp_pulse_detuning": 0.5e6,
-        "cond_disp_pulse_sigma": 2, #4,
+        "cond_disp_pulse_sigma": 2,
+
+        "sideband_length": 1e-6,
+        "sideband_frequency_l" : 10e6, # input unit is Hz
+        "sideband_frequency_h" : 10e6,
+        "sideband_amp_l" : 0.1,
+        "sideband_amp_h" : 0.1,
+        "sideband_phase" : 0, # in radians
+
+        "reset_delay_length": 300e-6,
     },
     'm1': { # mm1
         "mode_frequency": 5.1522076e9, #5.15263e9, # omega_d
@@ -297,7 +307,18 @@ cavity_parameters = {
 }
 
 # In[]
-my_run = ZI_QCCS(physical_ports, qubits_parameters, cavity_parameters, 
+# my_configurations = ZI_QCCS(physical_ports, qubits_parameters, cavity_parameters, 
+#                  number_of_qubits=3,
+#                  number_of_memory_modes=2,
+#                  is_memory_mode = True, 
+#                  which_qubit=0,
+#                  which_mode =0,
+#                  which_data= "I", 
+#                  cr_drive_lines=False, 
+#                  multiplex_drive_lines = False, 
+#                  use_emulation = False)
+
+my_run = Bosonic_experiments(physical_ports, qubits_parameters, cavity_parameters, 
                  number_of_qubits=3,
                  number_of_memory_modes=2,
                  is_memory_mode = True, 
@@ -314,8 +335,8 @@ my_run.prop_delay_calibration(line = "readout", average_exponent=12)
 
 
 # %%
-my_run.nopi_pi(average_exponent=11, phase = -60, is_plot_simulation=False) # used for 2^n averages, n=average_exponent, maximum: n = 19
-my_run.single_shot_nopi_pi(npts_exponent = 12, phase = -60)
+my_run.nopi_pi(average_exponent=11, phase = -90, is_plot_simulation=False) # used for 2^n averages, n=average_exponent, maximum: n = 19
+my_run.single_shot_nopi_pi(npts_exponent = 12, phase = -90)
 my_run.plot_nopi_pi(npts = 100)
 
 #In[]
@@ -343,6 +364,25 @@ my_run.Ramsey(is_echo = False, n_pi_pulse=4, # for CPMG
               is_plot_simulation= False)
 my_run.plot_Ramsey()
 
+# In[]
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.3
+
+my_run.Ramsey_with_photon(is_echo = True,
+              detuning = 0.5e6,
+              cavity_freq_detuning=20e6, # memory mode weak driving
+              average_exponent=11, duration = 10e-6, npts = 50, #duration/npts = integer
+              is_plot_simulation= False)
+
+my_run.plot_Ramsey(is_ramsey_with_photon = True)
+
+# In[]
+my_run.Ramsey_amp_sweep(is_echo = False, detuning = 0.5e6, cavity_freq_detuning=20e6, # memory mode weak driving
+              average_exponent=11, duration = 6e-6, npts = 50, #duration/npts = integer
+              amp_start = 0, amp_stop = 0.4, amp_npts = 11,
+              kappa = 0.008e6, chi = 0.1e6,
+              is_plot_figure=True,
+              is_plot_simulation= False)
+
 
 # %%
 my_run.error_amplification(average_exponent= 11, pulse_npts = 12, amp_npts = 21, 
@@ -354,7 +394,7 @@ my_run.plot_error_amplification(is_drag_beta_calibration = True)
 # my_run.Rabi_amplitude(average_exponent=12, npts = 101, is_plot_simulation=True)
 
 # In[]
-my_run.Rabi_length(average_exponent=11, duration = 15e-6, npts = 801, is_single_shot = False, is_plot_simulation=False)
+my_run.Rabi_length(average_exponent=11, duration = 15e-6, npts = 800, is_single_shot = False, is_plot_simulation=False)
 my_run.plot_Rabi_length()
 
 # In[] cr_calibration_amp
@@ -420,7 +460,7 @@ my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 1 # sweep variable
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1027
 
 my_run.CNOD_calibration(average_exponent=11, amp_range=1j, npts= 61, qubit_phase = 0, is_displaced_state= True, is_plot_simulation=False)
-my_run.plot_CNOD_calibration(scaling_factor=0.4897)
+my_run.plot_CNOD_calibration(scaling_factor=0.2755)
 
 # In[]
 
@@ -431,9 +471,10 @@ my_run.Characteristic_function_2D(average_exponent=10, npts=61, qubit_phase = 90
 my_run.plot_Characteristic_function_2D()
 
 # In[] before doing it, "alpha_1_CNOD_amp" needs to be calibrated. 
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 1
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.3 # sweep variable
 my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 1 # 이게 1이어야 함.. 코드 내부에서 amp 자리에 CNOD_alpha_1_amp가 들어가도록 되어 있음.
 # 이제까지 중복해서 곱해지는 현상 떄문에 원했던 amp보다 덜 들어가는 상황이었음.
+my_run.cavity_parameters['m0']['alpha_1_CNOD_amp'] = 0.2755
 
 my_run.disp_pulse_calibration_geophase(average_exponent=10, amp_sweep = 1, amp_npts=51, is_plot_simulation=False)
 my_run.plot_disp_pulse_calibration_geophase()
@@ -469,11 +510,11 @@ my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = my_run.cavity_parameters
 my_run.storage_mode_characterization(average_exponent=10, 
                                     wait_time = 30e-6,
                                     wait_npts = 101,
-                                    detuning = 0.0e6,#-0.0e6,
+                                    detuning = 0.2e6,#-0.0e6,
                                     init_state = "g",
                                     is_plot_simulation=False)
 # init_guess = [amplitude,omega,T1,freq=2*detuning,offset]
-my_run.plot_storage_mode_characterization(is_fit=True,init_guess=[-2, 5, 17e-6, 0.0e6, 0.5])
+my_run.plot_storage_mode_characterization(is_fit=True,init_guess=[1.66, 6.88, 35e-6, 0.4e6, -1.688])
 # In[]
 my_run.plot_storage_mode_characterization(is_fit=True,init_guess=[-2, 2.5, 10e-6, 0.0e6, 0.5])
 
@@ -525,6 +566,11 @@ my_run.plot_disentangling_power_sweep()
 
 
 
+
+
+# In[]
+
+my_run.continuous_wave(average_exponent=19, freq_l=10e6, freq_h=10e6, amp_l=0.5, amp_h=0.5, is_sideband_pulse = True, is_plot_simulation=True)
 
 
 

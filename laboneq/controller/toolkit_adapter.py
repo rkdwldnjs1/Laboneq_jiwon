@@ -3,22 +3,12 @@
 
 from __future__ import annotations
 from collections.abc import Mapping
-from unittest.mock import MagicMock
 
-import numpy as np
 import zhinst.core
 from zhinst.toolkit.driver.devices import DeviceType
 from zhinst.toolkit import Session as TKSession
 
 from laboneq.controller.devices.device_zi import DeviceBase, DeviceZI
-
-
-class MockedToolkit(MagicMock):
-    def __float__(self):
-        return 0
-
-    def __array__(self):
-        return np.array(0)
 
 
 class ToolkitDevices(Mapping):
@@ -65,9 +55,11 @@ class ToolkitDevices(Mapping):
             raise KeyError(f"No device found with serial or uid '{key}'")
 
         tk_session = self._tk_session(
-            device.daq.server_qualifier.host,
-            device.daq.server_qualifier.port,
-            device.daq._zi_api_object if device._api is None else None,
+            device.server_qualifier.host,
+            device.server_qualifier.port,
+            getattr(
+                device, "_zi_api_object", None
+            ),  # TODO(2K): Tests still provide a mock api object
         )
 
         return tk_session.devices[device.serial]

@@ -12,6 +12,7 @@ import zhinst.core
 from zhinst.core.errors import CoreError as LabOneCoreError
 
 from laboneq.core.exceptions.laboneq_exception import LabOneQException
+from laboneq.compiler.common.resource_usage import ResourceLimitationError
 
 _logger = logging.getLogger(__name__)
 
@@ -49,8 +50,7 @@ def seqc_compile_one(item: SeqCCompileItem):
     compiler_warnings = extra["messages"]
     if compiler_warnings:
         raise LabOneQException(
-            f"AWG compilation succeeded, but there are warnings:\n"
-            f"{compiler_warnings}"
+            f"AWG compilation succeeded, but there are warnings:\n{compiler_warnings}"
         )
 
     item.elf = elf
@@ -74,5 +74,7 @@ def awg_compile(awg_data: list[SeqCCompileItem]):
         ]
         if len(exceptions) > 0:
             errors = "\n".join([str(e) for e in exceptions])
+            if "not fitting" in errors:
+                raise ResourceLimitationError(f"Compilation failed.\n{errors}")
             raise LabOneQException(f"Compilation failed.\n{errors}")
     _logger.debug("Finished compilation.")

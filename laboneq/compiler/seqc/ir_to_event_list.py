@@ -1,177 +1,27 @@
 # Copyright 2023 Zurich Instruments AG
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import itertools
-import math
 
-from laboneq.compiler.common.compiler_settings import CompilerSettings, TINYSAMPLE
+from laboneq.compiler import ir as ir_def
+from laboneq.compiler.common import awg_info
+from laboneq.compiler.common.compiler_settings import TINYSAMPLE, CompilerSettings
 from laboneq.compiler.common.device_type import DeviceType
+from laboneq.compiler.event_list import event_list_generator as event_gen
 from laboneq.compiler.event_list.event_type import EventList, EventType
-from laboneq.compiler.event_list.event_list_generator import generate_event_list
-from laboneq.compiler.ir.ir import IRTree
-from laboneq.data.compilation_job import OscillatorInfo
+from laboneq.compiler.seqc import ir as ir_seqc
 
 
-def _calculate_osc_phase(event_list: EventList, ir: IRTree):
-    """Traverse the event list, and elaborate the phase of each played pulse.
-
-    For SW oscillators, calculate the time since the last set/reset of that oscillator,
-    and store it in the event as `oscillator_phase`. Illegal phase sets/resets in
-    conditional branches have previously been ruled out (see scheduler).
-    The `[increment|set]_oscillator_phase` fields are removed if present, and their
-    effect is aggregated into `oscillator_phase`.
-
-    For HW oscillators, do nothing. Absolute phase sets are illegal (and were caught in
-    the scheduler), and phase increments will be handled in the code generator.
-
-    After this function returns, all play events will contain the following phase-related
-    fields:
-     - "phase": the baseband phase of the pulse
-     - "oscillator_phase": the oscillator phase for SW modulators, `None` for HW
-     - "increment_oscillator_phase": if present, the event should increment the HW modulator
-    """
-    oscillator_phase_cumulative = {}
-    oscillator_phase_sets = {}
-
-    phase_reset_time = 0.0
-    priority_map = {
-        EventType.PLAY_START: 0,
-        EventType.DELAY_START: 0,
-        EventType.ACQUIRE_START: 0,
-        EventType.RESET_SW_OSCILLATOR_PHASE: -15,
-    }
-    sorted_events = sorted(
-        (e for e in event_list if e["event_type"] in priority_map),
-        key=lambda e: (e["time"], priority_map[e["event_type"]]),
-    )
-
-    oscillator_map = {signal.uid: signal.oscillator for signal in ir.signals}
-    device_map = {signal.uid: signal.device for signal in ir.signals}
-
-    for event in sorted_events:
-        if event["event_type"] == EventType.RESET_SW_OSCILLATOR_PHASE:
-            phase_reset_time = event["time"]
-            for signal_id in oscillator_phase_cumulative.keys():
-                oscillator_phase_cumulative[signal_id] = 0.0
-
-        else:
-            signal_id = event["signal"]
-            oscillator_info = oscillator_map[signal_id]
-            is_hw_osc = oscillator_info.is_hardware if oscillator_info else False
-            if (phase_incr := event.get("increment_oscillator_phase")) is not None:
-                if not is_hw_osc:
-                    if signal_id not in oscillator_phase_cumulative:
-                        oscillator_phase_cumulative[signal_id] = 0.0
-                    oscillator_phase_cumulative[signal_id] += phase_incr
-                    del event["increment_oscillator_phase"]
-
-            # if both "increment_oscillator_phase" and "set_oscillator_phase" are specified,
-            # the absolute phase overwrites the increment.
-            if (osc_phase := event.get("set_oscillator_phase")) is not None:
-                assert not oscillator_info.is_hardware, "cannot set phase of HW oscillators (should have been caught earlier)"
-
-                oscillator_phase_cumulative[signal_id] = osc_phase
-                oscillator_phase_sets[signal_id] = event["time"]
-                del event["set_oscillator_phase"]
-
-            if is_hw_osc:
-                event["oscillator_phase"] = None
-            else:  # SW oscillator
-                device = device_map[signal_id]
-                device_type = DeviceType.from_device_info_type(device.device_type)
-                if not device_type.is_qa_device:
-                    incremented_phase = oscillator_phase_cumulative.get(signal_id, 0.0)
-                    phase_reference_time = max(
-                        phase_reset_time, oscillator_phase_sets.get(signal_id, 0.0)
-                    )
-                    oscillator_frequency = event.get("oscillator_frequency", 0.0)
-                    t = event["time"] - phase_reference_time
-                    event["oscillator_phase"] = (
-                        t * 2.0 * math.pi * oscillator_frequency + incremented_phase
-                    )
-                else:
-                    event["oscillator_phase"] = 0.0
-
-
-def _remove_handled_oscillator_events(
-    event_list: EventList, oscillator_map: dict[str, OscillatorInfo]
-) -> EventList:
-    handled_event_id: set[int] = set()
-    for event in event_list:
-        if event["event_type"] == EventType.SET_OSCILLATOR_FREQUENCY_START:
-            signals = (
-                event["signal"]
-                if isinstance(event["signal"], set)
-                else {event["signal"]}
-            )
-            for signal_id in signals:
-                oscillator_info = oscillator_map[signal_id]
-                is_hw_osc = oscillator_info.is_hardware if oscillator_info else False
-                if not is_hw_osc:
-                    handled_event_id.add(event["id"])
-        if event["event_type"] == EventType.INITIAL_OSCILLATOR_FREQUENCY:
-            handled_event_id.add(event["id"])
-
-    for event in event_list:
-        if event["event_type"] == EventType.SET_OSCILLATOR_FREQUENCY_END:
-            if event["chain_element_id"] in handled_event_id:
-                handled_event_id.add(event["id"])
-
-    # note(mr): potentially expensive call
-    filtered_events = [
-        event for event in event_list if event["id"] not in handled_event_id
-    ]
-
-    return filtered_events
-
-
-def _calculate_osc_freq(event_list: EventList, ir: IRTree):
-    """Traverse the event list, and elaborate the frequency of each played pulse."""
-
-    priority_map = {
-        EventType.PLAY_START: 0,
-        EventType.ACQUIRE_START: 0,
-        EventType.SET_OSCILLATOR_FREQUENCY_START: -15,
-        EventType.INITIAL_OSCILLATOR_FREQUENCY: -30,
-    }
-    sorted_events = sorted(
-        (e for e in event_list if e["event_type"] in priority_map),
-        key=lambda e: (e["time"], priority_map[e["event_type"]]),
-    )
-
-    oscillator_map = {signal.uid: signal.oscillator for signal in ir.signals}
-    current_frequency_map = {}
-
-    for event in sorted_events:
-        signals = (
-            event["signal"] if isinstance(event["signal"], set) else {event["signal"]}
-        )
-        for signal_id in signals:
-            oscillator_info = oscillator_map[signal_id]
-            is_hw_osc = oscillator_info.is_hardware if oscillator_info else False
-            if event["event_type"] == EventType.SET_OSCILLATOR_FREQUENCY_START:
-                current_frequency_map[signal_id] = event["value"]
-            elif (
-                event["event_type"] == EventType.INITIAL_OSCILLATOR_FREQUENCY
-                and not is_hw_osc
-            ):
-                current_frequency_map[signal_id] = event["value"]
-            elif not is_hw_osc:
-                if signal_id in current_frequency_map:
-                    event["oscillator_frequency"] = current_frequency_map[signal_id]
-
-    return _remove_handled_oscillator_events(
-        event_list=event_list, oscillator_map=oscillator_map
-    )
-
-
-def _start_events(ir: IRTree) -> EventList:
+def _create_start_events(devices: list[ir_def.DeviceIR]) -> EventList:
     retval = []
 
     # Add initial events to reset the NCOs.
     # Todo (PW): Drop once system tests have been migrated from legacy behaviour.
-    for device_info in ir.devices:
+    for device_info in devices:
         try:
+            assert device_info.device_type is not None
             device_type = DeviceType.from_device_info_type(  # @IgnoreException
                 device_info.device_type
             )
@@ -192,33 +42,104 @@ def _start_events(ir: IRTree) -> EventList:
 
 
 def generate_event_list_from_ir(
-    ir: IRTree, settings: CompilerSettings, expand_loops: bool, max_events: int
-) -> EventList:
-    event_list = _start_events(ir)
-
+    ir: ir_def.IRTree,
+    settings: CompilerSettings,
+    expand_loops: bool,
+    max_events: int,
+) -> tuple[EventList, event_gen.IrPositionMap]:
+    event_list = _create_start_events(ir.devices)
+    ir_id_map = event_gen.IrPositionMapper().create_ir_position_map(ir.root)
     if ir.root is not None:
         id_tracker = itertools.count()
-        event_list.extend(
-            generate_event_list(
-                ir.root,
-                start=0,
-                max_events=max_events,
-                id_tracker=id_tracker,
-                expand_loops=expand_loops,
-                settings=settings,
-            )
-        )
-
-        # assign every event an id
+        events = event_gen.EventListGenerator(
+            id_tracker=id_tracker,
+            expand_loops=expand_loops,
+            settings=settings,
+            ir_id_map=ir_id_map,
+        ).run(ir.root, start=0, max_events=max_events)
+        event_list.extend(events)
         for event in event_list:
             if "id" not in event:
                 event["id"] = next(id_tracker)
-
-    # convert time from units of tiny samples to seconds
     for event in event_list:
         event["time"] = event["time"] * TINYSAMPLE
+    return event_list, ir_id_map
 
-    event_list = _calculate_osc_freq(event_list, ir)
-    _calculate_osc_phase(event_list, ir)
 
-    return event_list
+class EventListGeneratorCodeGenerator(event_gen.EventListGenerator):
+    def visit_SingleAwgIR(
+        self,
+        ir: ir_seqc.SingleAwgIR,
+        start: int,
+        max_events: int,
+    ) -> EventList:
+        return [
+            e for l in self.generate_children_events(ir, start, max_events) for e in l
+        ]
+
+    def visit_PulseIR(
+        self,
+        pulse_ir: ir_def.PulseIR,
+        start: int,
+        max_events: int,
+    ) -> EventList:
+        return []
+
+    def visit_AcquireGroupIR(
+        self,
+        acquire_group_ir: ir_def.AcquireGroupIR,
+        start: int,
+        max_events: int,
+    ) -> EventList:
+        return []
+
+    def visit_MatchIR(
+        self,
+        match_ir: ir_def.MatchIR,
+        start: int,
+        max_events: int,
+    ) -> EventList:
+        assert match_ir.length is not None
+        return self.visit_SectionIR(match_ir, start, max_events)
+
+    def visit_CaseIR(
+        self,
+        case_ir: ir_def.CaseIR,
+        start: int,
+        max_events: int,
+    ) -> EventList:
+        return self.visit_SectionIR(case_ir, start, max_events)
+
+
+def event_list_per_awg(
+    tree: ir_def.IRTree,
+    settings: CompilerSettings,
+) -> tuple[
+    dict[awg_info.AwgKey, EventList], dict[awg_info.AwgKey, event_gen.IrPositionMapper]
+]:
+    """Generate event list per AWG in the tree root."""
+    assert tree.root is not None
+    event_lists_by_awg: dict[awg_info.AwgKey, EventList] = {}
+    ir_id_map_by_awg: dict[awg_info.AwgKey, event_gen.IrPositionMapper] = {}
+    id_tracker = itertools.count()
+
+    for awg_ir in tree.root.children:
+        assert isinstance(awg_ir, ir_seqc.SingleAwgIR)
+        ir_id_map = event_gen.IrPositionMapper().create_ir_position_map(awg_ir)
+        event_list_generator = EventListGeneratorCodeGenerator(
+            expand_loops=False,
+            settings=settings,
+            id_tracker=id_tracker,
+            ir_id_map=ir_id_map,
+        )
+        event_list = _create_start_events(
+            [dev for dev in tree.devices if dev.uid == awg_ir.awg.device_id]
+        )
+        event_list.extend(event_list_generator.run(awg_ir, start=0))
+        for event in event_list:
+            if "id" not in event:
+                event["id"] = next(id_tracker)
+            event["time"] = event["time"] * TINYSAMPLE
+        event_lists_by_awg[awg_ir.awg.key] = event_list
+        ir_id_map_by_awg[awg_ir.awg.key] = ir_id_map
+    return event_lists_by_awg, ir_id_map_by_awg

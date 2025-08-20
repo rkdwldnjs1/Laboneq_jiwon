@@ -13,7 +13,7 @@ from yaml import load
 try:
     from yaml import CLoader as Loader
 except ImportError:
-    from yaml import Loader
+    from yaml import Loader  # type: ignore[assignment]
 
 import laboneq.core.path as qct_path
 from laboneq.core.exceptions import LabOneQException
@@ -23,12 +23,12 @@ from laboneq.dsl.device.connection import InternalConnection, SignalConnection
 from laboneq.dsl.device.instruments import (
     HDAWG,
     PQSC,
+    PRETTYPRINTERDEVICE,
     QHUB,
     SHFPPC,
     SHFQA,
     SHFQC,
     SHFSG,
-    PRETTYPRINTERDEVICE,
     UHFQA,
     NonQC,
 )
@@ -104,9 +104,6 @@ InstrumentsType = dict[str, list[dict[str, str]]]
 #         - iq_signal: q0/measure_line
 #           ports: [SIGOUTS/0, SIGOUTS/1]
 #         - acquire_signal: q0/acquire_line
-#       device_pqsc:
-#         - to: device_hdawg
-#           port: ZSYNCS/0
 ConnectionsType = dict[str, list[dict[str, Union[str, list[str]]]]]
 
 # Models 'dataservers' part of the descriptor:
@@ -193,8 +190,7 @@ def _port_decoder(
         local_ports.extend(ports)
 
     signal_keys = [T_IQ_SIGNAL, T_ACQUIRE_SIGNAL, T_RF_SIGNAL]
-    trigger_keys = []
-    trigger_keys.append(T_TO)
+    trigger_keys = [T_TO]
     path_keys = signal_keys + trigger_keys
     all_keys = path_keys + additional_switch_keys
 
@@ -233,13 +229,13 @@ def make_zi_devices(
     setup: DeviceSetup,
 ):
     zi_instruments = {
-        # Descriptor key: Intrument class, Reference clock option, connection builder.
+        # Descriptor key: Instrument class, Reference clock option, connection builder.
         T_HDAWG_DEVICE: (HDAWG, T_EXTCLK, _make_connection),
         T_UHFQA_DEVICE: (UHFQA, T_EXTCLK, _make_connection),
         T_SHFQA_DEVICE: (SHFQA, T_EXTCLK, _make_connection),
         T_SHFSG_DEVICE: (SHFSG, T_EXTCLK, _make_connection),
         T_SHFQC_DEVICE: (SHFQC, T_EXTCLK, _make_connection),
-        T_PRETTYPRINTER_DEVICE: (PRETTYPRINTERDEVICE, T_EXTCLK, _make_connection),
+        T_PRETTYPRINTER_DEVICE: (PRETTYPRINTERDEVICE, None, _make_connection),
         T_SHFPPC_DEVICE: (SHFPPC, T_EXTCLK, _make_ppc_connection),
         T_PQSC_DEVICE: (PQSC, T_INTCLK, _make_connection),
         T_QHUB_DEVICE: (QHUB, T_INTCLK, _make_connection),
@@ -262,7 +258,7 @@ def make_zi_devices(
                 )
             )
             conns = connections.get(uid, [])
-            if ref_clk in conns:
+            if ref_clk is not None and ref_clk in conns:
                 dev.reference_clock_source = ref_clk_types[ref_clk]
                 conns.remove(ref_clk)
             modifier.add_instrument(setup, dev)
@@ -373,7 +369,7 @@ class _DeviceSetupGenerator:
     def from_descriptor(
         yaml_text: str,
         server_host: str | None = None,
-        server_port: str | None = None,
+        server_port: str | int | None = None,
         setup_name: str | None = None,
     ):
         setup_desc = load(yaml_text, Loader=Loader)
@@ -395,7 +391,7 @@ class _DeviceSetupGenerator:
     def from_yaml(
         filepath,
         server_host: str | None = None,
-        server_port: str | None = None,
+        server_port: str | int | None = None,
         setup_name: str | None = None,
     ):
         with open(filepath) as fp:
@@ -422,7 +418,7 @@ class _DeviceSetupGenerator:
         dataservers: DataServersType | None = None,
         qubits: list | None = None,
         server_host: str | None = None,
-        server_port: str | None = None,
+        server_port: str | int | None = None,
         setup_name: str | None = None,
     ):
         # To avoid circular imports
@@ -462,7 +458,7 @@ class _DeviceSetupGenerator:
             dataservers = {
                 "zi_server": {
                     "host": server_host,
-                    "port": "8004" if server_port is None else server_port,
+                    "port": "8004" if server_port is None else str(server_port),
                 }
             }
 

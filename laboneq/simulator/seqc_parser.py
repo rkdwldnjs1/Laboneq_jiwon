@@ -239,6 +239,16 @@ def parse_set_func(param_name: str, stmt: Node, runtime: SimpleRuntime):
 
 
 def parse_statement(item: Node, runtime: SimpleRuntime):
+    if (
+        runtime.max_time is not None
+        and runtime._last_play_start_samples()[0] / runtime.descriptor.sampling_rate
+        > runtime.max_time
+    ):
+        # Stop, once a time-span event encountered, that is entirely outside the simulation region.
+        # This is important, as any point-in-time events before must be captured. This last time-span
+        # event, however, must be dropped.
+        runtime.seqc_simulation.events.pop(-1)
+        raise StopSimulation
     try:
         return parse_expression(item, runtime)
     except TreeWalkException:
@@ -294,16 +304,6 @@ def parse_statement(item: Node, runtime: SimpleRuntime):
         for _i in range(n):
             for subitem in item.stmt.children():
                 parse_statement(subitem[1], runtime)
-    if (
-        runtime.max_time is not None
-        and runtime._last_play_start_samples()[0] / runtime.descriptor.sampling_rate
-        > runtime.max_time
-    ):
-        # Stop, once a time-span event encountered, that is entirely outside the simulation region.
-        # This is important, as any point-in-time events before must be captured. This last time-span
-        # event, however, must be dropped.
-        runtime.seqc_simulation.events.pop(-1)
-        raise StopSimulation
 
 
 @dataclass
@@ -641,10 +641,18 @@ class SimpleRuntime:
             self._update_wave_refs(wave_names, known_wave)
 
             uses_marker_1 = any(
-                ["marker1" in wave for wave in wave_names if wave is not None]
+                (
+                    wave.endswith("marker1.wave")
+                    for wave in wave_names
+                    if wave is not None
+                )
             )
             uses_marker_2 = any(
-                ["marker2" in wave for wave in wave_names if wave is not None]
+                (
+                    wave.endswith("marker2.wave")
+                    for wave in wave_names
+                    if wave is not None
+                )
             )
             length_samples = known_wave.length_samples
             wave_data_indices = known_wave.wave_data_idx
@@ -753,7 +761,9 @@ class SimpleRuntime:
             raise ValueError(f"Unknown signal type: {wave['type']}")
 
         for candidate_wave in self.waves.keys():
-            if wave["wave_name"] in candidate_wave and "marker" in candidate_wave:
+            if wave["wave_name"] in candidate_wave and (
+                "marker1.wave" in candidate_wave or "marker2.wave" in candidate_wave
+            ):
                 wave_names.append(candidate_wave)
 
         return wave_names, known_wave
@@ -1063,6 +1073,7 @@ def analyze_recipe(
         )
         awg_index = 0
         for awg in init.awgs:
+            assert isinstance(awg.awg, int)
             awg_nr = awg.awg
             rt_exec_step = next(
                 r
@@ -1134,7 +1145,8 @@ def analyze_recipe(
     seqc_descriptors = []
     for name, seqc_descriptor in seqc_descriptors_from_recipe.items():
         command_table = next(
-            (table["ct"] for table in command_tables if table["seqc"] == name), {}
+            (table["ct"]["table"] for table in command_tables if table["seqc"] == name),
+            {},
         )
         seqc_descriptor = seqc_descriptors_from_recipe[name]
         seqc_descriptor.source = src_fname_to_text[name]

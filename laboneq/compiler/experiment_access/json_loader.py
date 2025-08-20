@@ -17,7 +17,6 @@ from laboneq.core.exceptions import LabOneQException
 from laboneq.data.calibration import ExponentialCompensation, HighPassCompensation
 from laboneq.data.compilation_job import (
     AcquireInfo,
-    FollowerInfo,
     Marker,
     MixerCalibrationInfo,
     PrecompensationInfo,
@@ -100,20 +99,15 @@ class JsonLoader(LoaderBase):
         if "connectivity" in experiment:
             for dio in experiment["connectivity"].get("dios", {}):
                 leader = self._devices[dio["leader"]["$ref"]]
-                follower = self._devices[dio["follower"]["$ref"]]
-                leader.followers.append(FollowerInfo(follower, 0))
+                leader.followers.append(dio["follower"]["$ref"])
             if "leader" in experiment["connectivity"]:
                 leader_device_id = experiment["connectivity"]["leader"]["$ref"]
                 self.global_leader_device_id = leader_device_id
 
             for pqsc in experiment["connectivity"].get("pqscs", {}):
                 pqsc_device_id = pqsc["device"]["$ref"]
-                for port in pqsc.get("ports", ()):
-                    self._devices[pqsc_device_id].followers.append(
-                        FollowerInfo(
-                            self._devices[port["device"]["$ref"]], port["port"]
-                        )
-                    )
+                for follower in pqsc.get("followers", ()):
+                    self._devices[pqsc_device_id].followers.append(follower["$ref"])
 
     def _load_signals(self, experiment):
         for signal in sorted(experiment["signals"], key=lambda s: s["id"]):
@@ -156,32 +150,26 @@ class JsonLoader(LoaderBase):
                 precompensation = None
             range = connection.get("range")
             range_unit = connection.get("range_unit")
-            if range is not None or range_unit is not None:
-                range = SignalRange(range, range_unit)
+            signal_range = None if range is None else SignalRange(range, range_unit)
             lo_frequency = connection.get("lo_frequency")
             port_delay = connection.get("port_delay")
             delay_signal = connection.get("delay_signal")
 
             self.add_signal_connection(
-                connection["signal"]["$ref"],
-                {
-                    "signal_id": connection["signal"]["$ref"],
-                    "device_id": connection["device"]["$ref"],
-                    "connection_type": connection["connection"]["type"],
-                    "channels": connection["connection"]["channels"],
-                    "voltage_offset": voltage_offset,
-                    "mixer_calibration": mixer_calibration,
-                    "precompensation": precompensation,
-                    "lo_frequency": lo_frequency,
-                    "range": range,
-                    "range_unit": range_unit,
-                    "port_delay": port_delay,
-                    "delay_signal": delay_signal,
-                    "port_mode": None,
-                    "threshold": None,
-                    "amplitude": None,
-                    "amplifier_pump": None,
-                },
+                signal_id=connection["signal"]["$ref"],
+                device_id=connection["device"]["$ref"],
+                channels=connection["connection"]["channels"],
+                voltage_offset=voltage_offset,
+                mixer_calibration=mixer_calibration,
+                precompensation=precompensation,
+                lo_frequency=lo_frequency,
+                signal_range=signal_range,
+                port_delay=port_delay,
+                delay_signal=delay_signal,
+                port_mode=None,
+                threshold=None,
+                amplitude=None,
+                amplifier_pump=None,
             )
 
     def _load_pulses(self, experiment):
@@ -345,7 +333,7 @@ class JsonLoader(LoaderBase):
                     uid=instance_id,
                     execution_type=execution_type,
                     count=count,
-                    chunk_count=1,
+                    chunked=False,
                     acquisition_type=acquisition_type,
                     alignment=align,
                     on_system_grid=on_system_grid,

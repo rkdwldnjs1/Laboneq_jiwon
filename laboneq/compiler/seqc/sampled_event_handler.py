@@ -5,26 +5,33 @@ from __future__ import annotations
 
 import logging
 from functools import cmp_to_key
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
-
+from laboneq.core.types.enums import AcquisitionType
+from laboneq.core.types.enums.acquisition_type import (
+    is_spectroscopy as is_spectroscopy_type,
+)
 from laboneq._utils import flatten
 from laboneq.compiler.common.feedback_connection import FeedbackConnection
 from laboneq.compiler.common.feedback_register_config import FeedbackRegisterConfig
+from laboneq.compiler.common.resource_usage import ResourceUsage
 from laboneq.compiler.common.signal_obj import SignalObj
 from laboneq.compiler.feedback_router.feedback_router import (
     FeedbackRegisterLayout,
     GlobalFeedbackRegister,
     LocalFeedbackRegister,
 )
-from laboneq.compiler.seqc.seqc_generator import (
+from laboneq._rust.codegenerator import (
     SeqCGenerator,
+    seqc_generator_from_device_and_signal_type as seqc_generator_from_device_and_signal_type_str,
     merge_generators,
 )
 from laboneq.compiler.seqc.shfppc_sweeper_config_tracker import (
     SHFPPCSweeperConfigTracker,
 )
-from laboneq.compiler.seqc.signatures import PlaybackSignature, WaveformSignature
+from laboneq.compiler.seqc.signatures import (
+    PlaybackSignature,
+)
 from laboneq.compiler.seqc.awg_sampled_event import (
     AWGEvent,
     AWGEventType,
@@ -33,18 +40,24 @@ from laboneq.compiler.seqc.awg_sampled_event import (
 from laboneq.compiler.common.compiler_settings import EXECUTETABLEENTRY_LATENCY
 from laboneq.compiler.common.device_type import DeviceType
 from laboneq.core.exceptions import LabOneQException
-from laboneq.core.types.enums import AcquisitionType
-from laboneq.core.utilities.string_sanitize import string_sanitize
 
 if TYPE_CHECKING:
     from laboneq.compiler.seqc.command_table_tracker import (
         CommandTableTracker,
     )
-    from laboneq.compiler.seqc.seqc_tracker import SeqCTracker
-    from laboneq.compiler.seqc.wave_index_tracker import WaveIndexTracker
-    from laboneq.compiler.common.awg_info import AWGInfo
+    from laboneq._rust.codegenerator import WaveIndexTracker, SeqCTracker
+    from laboneq.compiler.common.awg_info import AWGInfo, AWGSignalType
 
 _logger = logging.getLogger(__name__)
+
+
+def seqc_generator_from_device_and_signal_type(
+    device_type: DeviceType,
+    signal_type: AWGSignalType,
+) -> SeqCGenerator:
+    return seqc_generator_from_device_and_signal_type_str(
+        device_type.value, signal_type.value
+    )
 
 
 def sort_events(events: List[AWGEvent]) -> List[AWGEvent]:
@@ -76,7 +89,6 @@ def sort_events(events: List[AWGEvent]) -> List[AWGEvent]:
         except TypeError:
             # legacy ordering based on type only
             later = {
-                AWGEventType.SEQUENCER_START: -100,
                 AWGEventType.INITIAL_RESET_PHASE: -5,
                 AWGEventType.LOOP_STEP_START: -4,
                 AWGEventType.LOOP_STEP_END: -4,
@@ -129,16 +141,17 @@ class SampledEventHandler:
         declarations_generator: SeqCGenerator,
         wave_indices: WaveIndexTracker,
         qa_signal_by_handle: dict[str, SignalObj],
+        feedback_register: int | None,
         feedback_connections: dict[str, FeedbackConnection],
         feedback_register_layout: FeedbackRegisterLayout,
         feedback_register_config: FeedbackRegisterConfig,
         awg: AWGInfo,
         device_type: DeviceType,
         channels: List[int],
-        sampled_signatures: Dict[str, Dict[WaveformSignature, Dict]],
         use_command_table: bool,
         emit_timing_comments: bool,
         use_current_sequencer_step: bool,
+        acquisition_type: AcquisitionType | None,
     ):
         self.seqc_tracker = seqc_tracker
         self.command_table_tracker = command_table_tracker
@@ -147,16 +160,16 @@ class SampledEventHandler:
         self.declarations_generator = declarations_generator
         self.wave_indices = wave_indices
         self.qa_signal_by_handle = qa_signal_by_handle
+        self.feedback_register = feedback_register
         self.feedback_connections = feedback_connections
         self.feedback_register_layout = feedback_register_layout
         self.feedback_register_config = feedback_register_config
         self.awg = awg
         self.device_type = device_type
         self.channels = channels
-        self.sampled_signatures = sampled_signatures
         self.use_command_table = use_command_table
         self.emit_timing_comments = emit_timing_comments
-
+        self.acquisition_type = acquisition_type
         self.sampled_event_list: List[AWGEvent] = None  # type: ignore
         self.loop_stack: List[AWGEvent] = []
         self.last_event: Optional[AWGEvent] = None
@@ -187,8 +200,7 @@ class SampledEventHandler:
         self,
         sampled_event: AWGEvent,
     ):
-        signature: PlaybackSignature = sampled_event.params["playback_signature"]
-        signal_id = sampled_event.params["signal_id"]
+        signature = sampled_event.signature
         state = signature.state
 
         match_statement_active = self.match_parent_event is not None
@@ -203,11 +215,7 @@ class SampledEventHandler:
             raise LabOneQException(
                 f"Found match/case statement for handle {handle} on unsupported device."
             )
-
-        if not (
-            signal_id in self.sampled_signatures
-            and signature.waveform in self.sampled_signatures[signal_id]
-        ):
+        if not signature.waveform:
             return False
 
         _logger.debug(
@@ -217,7 +225,10 @@ class SampledEventHandler:
         )
         if state is None:
             # Playzeros were already added for match event
-            self.seqc_tracker.add_required_playzeros(sampled_event)
+            assert sampled_event.start is not None
+            assert sampled_event.end is not None
+            self.seqc_tracker.add_required_playzeros(sampled_event.start)
+            self.seqc_tracker.flush_deferred_phase_changes()
             self.seqc_tracker.add_timing_comment(sampled_event.end)
 
         play_wave_channel = None
@@ -244,18 +255,19 @@ class SampledEventHandler:
             self.handle_playwave_on_prng(sampled_event, signature, wave_index)
             return True
 
-    def get_wave_index(self, signature, sig_string, play_wave_channel):
+    def get_wave_index(
+        self,
+        signature: PlaybackSignature,
+        sig_string: str,
+        play_wave_channel: int | None,
+    ) -> int | None:
         signal_type_for_wave_index = (
             self.awg.signal_type.value
             if self.device_type.supports_binary_waves
             else "csv"
             # Include CSV waves into the index to keep track of waves-AWG mapping
         )
-        if (
-            not signature.waveform.samples
-            and all(p.pulse is None for p in signature.waveform.pulses)
-            and self.use_command_table
-        ):
+        if signature.waveform.is_playzero() and self.use_command_table:
             # all-zero pulse is played via play-zero command table entry
             wave_index = None
         else:
@@ -266,8 +278,6 @@ class SampledEventHandler:
                 )
                 if wave_index is not None:
                     self.declarations_generator.add_assign_wave_index_statement(
-                        self.device_type,
-                        self.awg.signal_type.value,
                         sig_string,
                         wave_index,
                         play_wave_channel,
@@ -275,39 +285,26 @@ class SampledEventHandler:
 
         return wave_index
 
-    def precomp_reset_ct_index(self) -> int:
-        length = 32
-        sig_string = "precomp_reset"
-        wave_index = self.wave_indices.lookup_index_by_wave_id(sig_string)
-
-        signature = PlaybackSignature(
-            waveform=WaveformSignature(
-                length=length,
-                pulses=None,
-                samples=None,  # not relevant for command table entry creation
-            ),
-            clear_precompensation=True,
-            hw_oscillator=None,
-            pulse_parameters=(),
-        )
-
+    def precomp_reset_ct_index(
+        self, signature: PlaybackSignature, signature_string: str
+    ) -> int:
+        length = signature.waveform.length
+        wave_index = self.wave_indices.lookup_index_by_wave_id(signature_string)
         if wave_index is None:
             assert self.device_type.supports_binary_waves
             signal_type_for_wave_index = self.awg.signal_type.value
 
             self.declarations_generator.add_zero_wave_declaration(
-                self.device_type, signal_type_for_wave_index, sig_string, length
+                signature_string, length
             )
             wave_index = self.wave_indices.create_index_for_wave(
-                sig_string, signal_type_for_wave_index
+                signature_string, signal_type_for_wave_index
             )
             play_wave_channel = None
             if len(self.channels) > 0:
                 play_wave_channel = self.channels[0] % 2
             self.declarations_generator.add_assign_wave_index_statement(
-                self.device_type,
-                signal_type_for_wave_index,
-                sig_string,
+                signature_string,
                 wave_index,
                 play_wave_channel,
             )
@@ -315,7 +312,6 @@ class SampledEventHandler:
             ct_index = self.command_table_tracker.create_entry(signature, wave_index)
         else:
             ct_index = self.command_table_tracker.lookup_index_by_signature(signature)
-
         return ct_index
 
     def handle_regular_playwave(
@@ -328,17 +324,13 @@ class SampledEventHandler:
     ):
         assert signature.waveform is not None
         if self.use_command_table:
-            ct_index = self.command_table_tracker.lookup_index_by_signature(signature)
-            if ct_index is None:
-                ct_index = self.command_table_tracker.create_entry(
-                    signature, wave_index
-                )
+            ct_index = self.command_table_tracker.get_or_create_entry(
+                signature, wave_index
+            )
             comment = self._make_command_table_comment(signature)
             self.seqc_tracker.add_command_table_execution(ct_index, comment=comment)
         else:
             self.seqc_tracker.add_play_wave_statement(
-                self.device_type,
-                self.awg.signal_type.value,
                 sig_string,
                 play_wave_channel,
             )
@@ -384,7 +376,12 @@ class SampledEventHandler:
         state = signature.state
         assert state is not None
         assert user_register is not None
-        branch_generator = self.match_seqc_generators.setdefault(state, SeqCGenerator())
+        branch_generator = self.match_seqc_generators.setdefault(
+            state,
+            seqc_generator_from_device_and_signal_type(
+                self.device_type, self.awg.signal_type
+            ),
+        )
         if self.use_command_table:
             ct_index = self.command_table_tracker.lookup_index_by_signature(signature)
             if ct_index is None:
@@ -395,8 +392,6 @@ class SampledEventHandler:
             branch_generator.add_command_table_execution(ct_index, comment=comment)
         else:
             branch_generator.add_play_wave_statement(
-                self.device_type,
-                self.awg.signal_type.value,
                 sig_string,
                 play_wave_channel,
             )
@@ -429,11 +424,12 @@ class SampledEventHandler:
             )
 
     @staticmethod
-    def _make_command_table_comment(signature: PlaybackSignature):
+    def _make_command_table_comment(signature: PlaybackSignature) -> str:
         parts = []
 
-        if signature.hw_oscillator is not None:
-            parts.append(f"osc={signature.hw_oscillator}")
+        hw_oscillator = signature.hw_oscillator
+        if hw_oscillator is not None:
+            parts.append(f"osc={hw_oscillator.osc_index}|{hw_oscillator.osc_id}")
 
         if signature.set_phase is not None:
             parts.append(f"phase={signature.set_phase:.2g}")
@@ -466,15 +462,22 @@ class SampledEventHandler:
         sampled_event: AWGEvent,
     ):
         assert self.seqc_tracker.current_time == sampled_event.start
+
+        # There cannot be any zero-length phase increments between the head playWave
+        # and the playHold.
+        assert not self.seqc_tracker.has_deferred_phase_changes()
+
         self.seqc_tracker.add_play_hold_statement(
             sampled_event.end - sampled_event.start
         )
         self.seqc_tracker.current_time = sampled_event.end
 
-    def handle_amplitude_register_init(self, sampled_event):
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+    def handle_amplitude_register_init(self, sampled_event: AWGEvent):
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
+        self.seqc_tracker.flush_deferred_phase_changes()
         assert self.use_command_table
-        signature = sampled_event.params["playback_signature"]
+        signature = sampled_event.signature
         ct_index = self.command_table_tracker.lookup_index_by_signature(signature)
         if ct_index is None:
             ct_index = self.command_table_tracker.create_entry(signature, None)
@@ -486,12 +489,13 @@ class SampledEventHandler:
 
         args = [
             "QA_INT_ALL",
-            "1" if "RAW" in sampled_event.params["acquisition_type"] else "0",
+            "1" if self.acquisition_type == AcquisitionType.RAW else "0",
         ]
+        assert sampled_event.start is not None
         start = sampled_event.start
 
         if start > self.seqc_tracker.current_time:
-            self.seqc_tracker.add_required_playzeros(sampled_event)
+            self.seqc_tracker.add_required_playzeros(start)
 
             _logger.debug("  Deferring function call for %s", sampled_event)
             self.seqc_tracker.add_function_call_statement(
@@ -519,24 +523,22 @@ class SampledEventHandler:
         generator_channels = set()
         play_event: AWGEvent
         for play_event in sampled_event.params["play_events"]:
-            signature: PlaybackSignature = play_event.params["playback_signature"]
-            play_signature = signature.waveform
-            signal_id = play_event.params.get("signal_id")
-            if signal_id is not None:
-                if play_signature in self.sampled_signatures[signal_id]:
-                    current_signal_obj = next(
-                        signal_obj
-                        for signal_obj in self.awg.signals
-                        if signal_obj.id == signal_id
-                    )
-                    generator_channels.update(current_signal_obj.channels)
-                    sig_string = play_signature.signature_string()
-
-                    self.wave_indices.add_numbered_wave(
-                        sig_string,
-                        "complex",
-                        current_signal_obj.channels[0],
-                    )
+            waveform_signature = play_event.signature.waveform
+            # TODO: Could we somehow add channels to events immediately?
+            signal_ids = play_event.params.get("signal_ids")
+            if signal_ids and waveform_signature:
+                [signal_id] = signal_ids
+                current_signal_obj = next(
+                    signal_obj
+                    for signal_obj in self.awg.signals
+                    if signal_obj.id == signal_id
+                )
+                generator_channels.update(current_signal_obj.channels)
+                self.wave_indices.add_numbered_wave(
+                    waveform_signature.signature_string(),
+                    "complex",
+                    current_signal_obj.channels[0],
+                )
 
         integration_channels = list(
             flatten(
@@ -558,17 +560,11 @@ class SampledEventHandler:
             )
         else:
             generator_mask = "QA_GEN_NONE"
-
-        is_spectroscopy = bool(
-            set(sampled_event.params["acquisition_type"]).intersection(
-                [
-                    AcquisitionType.SPECTROSCOPY_IQ.value,
-                    AcquisitionType.SPECTROSCOPY.value,
-                    AcquisitionType.SPECTROSCOPY_PSD.value,
-                ]
-            )
-        )
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        is_spectroscopy = is_spectroscopy_type(self.acquisition_type)
+        assert sampled_event.start is not None
+        assert sampled_event.end is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
+        self.seqc_tracker.flush_deferred_phase_changes()
         if sampled_event.end > self.seqc_tracker.current_time:
             self.seqc_tracker.add_timing_comment(sampled_event.end)
 
@@ -589,8 +585,8 @@ class SampledEventHandler:
                 trigger=0b10 | self.seqc_tracker.trigger_output_state(),
             )
         else:
-            monitor = 1 if "RAW" in sampled_event.params["acquisition_type"] else 0
-            feedback_register = sampled_event.params["feedback_register"] or 0
+            monitor = 1 if self.acquisition_type == AcquisitionType.RAW else 0
+            feedback_register = self.feedback_register or 0
             self.seqc_tracker.add_startqa_shfqa_statement(
                 generator_mask,
                 integrator_mask,
@@ -610,15 +606,17 @@ class SampledEventHandler:
             self.seqc_tracker.flush_deferred_function_calls()
 
     def handle_reset_precompensation_filters(self, sampled_event: AWGEvent):
-        if sampled_event.params["signal_id"] not in (s.id for s in self.awg.signals):
-            return
-
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
 
         if self.use_command_table:
-            ct_index = self.precomp_reset_ct_index()
+            signature_string = "precomp_reset"
+            ct_index = self.precomp_reset_ct_index(
+                signature=sampled_event.maybe_signature,
+                signature_string=signature_string,
+            )
             self.seqc_tracker.add_command_table_execution(
-                ct_index, comment="precomp_reset"
+                ct_index, comment=signature_string
             )
             self.seqc_tracker.flush_deferred_function_calls()
             self.seqc_tracker.current_time = sampled_event.end
@@ -629,10 +627,10 @@ class SampledEventHandler:
             sampled_event,
         )
         self.seqc_tracker.add_function_call_statement(
-            name="setPrecompClear", args=[1], deferred=False
+            name="setPrecompClear", args=["1"], deferred=False
         )
         self.seqc_tracker.add_function_call_statement(
-            name="setPrecompClear", args=[0], deferred=True
+            name="setPrecompClear", args=["0"], deferred=True
         )
 
     def handle_reset_phase(self, sampled_event: AWGEvent):
@@ -657,7 +655,6 @@ class SampledEventHandler:
             signature = PlaybackSignature(
                 waveform=None,
                 hw_oscillator=None,
-                pulse_parameters=(),
                 set_phase=0.0,
             )
 
@@ -669,16 +666,18 @@ class SampledEventHandler:
 
         _logger.debug("  Processing RESET PHASE event %s", sampled_event)
         start = sampled_event.start
+        self.seqc_tracker.discard_deferred_phase_changes()
+        assert start is not None
         if sampled_event.type == AWGEventType.INITIAL_RESET_PHASE:
             if start > self.seqc_tracker.current_time:
-                self.seqc_tracker.add_required_playzeros(sampled_event)
+                self.seqc_tracker.add_required_playzeros(start)
             # Hack: we do not defer, and emit as early as possible.
             # This way it is hidden in the lead time.
             self.seqc_tracker.add_function_call_statement("resetOscPhase")
             if ct_index is not None:
                 self.seqc_tracker.add_command_table_execution(ct_index)
         elif sampled_event.type == AWGEventType.RESET_PHASE:
-            self.seqc_tracker.add_required_playzeros(sampled_event)
+            self.seqc_tracker.add_required_playzeros(start)
             self.seqc_tracker.add_function_call_statement(
                 "resetOscPhase", deferred=True
             )
@@ -692,26 +691,22 @@ class SampledEventHandler:
             self._handle_set_oscillator_frequency_shf(sampled_event)
 
     def _handle_set_oscillator_frequency_hdawg(self, sampled_event: AWGEvent):
+        osc_index: int = sampled_event.params["osc_index"]
+        osc_id_symbol = f"freq_osc_{osc_index}"
+        counter_variable_name = f"c_freq_osc_{osc_index}"
         iteration = sampled_event.params["iteration"]
-        parameter_name = sampled_event.params["parameter_name"]
-        param_stem = string_sanitize(parameter_name)
-        counter_variable_name = string_sanitize(f"index_{parameter_name}")
         if iteration == 0:
             iterations = sampled_event.params["iterations"]
-            if iterations > 512:
-                raise LabOneQException(
-                    "HDAWG can only handle RT frequency sweeps up to 512 steps."
-                )
             steps = "\n  ".join(
                 generate_if_else_tree(
                     iterations=iterations,
-                    variable=f"arg_{param_stem}",
-                    step_factory=lambda i: f"setDouble(osc_node_{param_stem}, {sampled_event.params['start_frequency'] + sampled_event.params['step_frequency'] * i});",
+                    variable=f"arg_{osc_id_symbol}",
+                    step_factory=lambda i: f"setDouble(osc_node_{osc_id_symbol}, {sampled_event.params['start_frequency'] + sampled_event.params['step_frequency'] * i});",
                 )
             )
             self.function_defs_generator.add_function_def(
-                f"void set_{param_stem}(var arg_{param_stem}) {{\n"
-                f'  string osc_node_{param_stem} = "oscs/0/freq";\n'
+                f"void set_{osc_id_symbol}(var arg_{osc_id_symbol}) {{\n"
+                f'  string osc_node_{osc_id_symbol} = "oscs/{osc_index}/freq";\n'
                 f"  {steps}\n"
                 f"}}\n"
             )
@@ -719,27 +714,26 @@ class SampledEventHandler:
                 counter_variable_name, 0
             )
             self.seqc_tracker.add_variable_assignment(counter_variable_name, 0)
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
         self.seqc_tracker.add_function_call_statement(
-            f"set_{param_stem}",
-            args=(f"{counter_variable_name}++",),
+            f"set_{osc_id_symbol}",
+            args=[f"{counter_variable_name}++"],
             deferred=True,
         )
 
     def _handle_set_oscillator_frequency_shf(self, sampled_event: AWGEvent):
         iteration = sampled_event.params["iteration"]
-        parameter_name = sampled_event.params["parameter_name"]
-        counter_variable_name = string_sanitize(f"index_{parameter_name}")
-        osc_id_symbol = string_sanitize(sampled_event.params["oscillator_id"])
+        osc_index: int = sampled_event.params["osc_index"]
+        osc_id_symbol = f"freq_osc_{osc_index}"
+        counter_variable_name = f"c_freq_osc_{osc_index}"
 
         if not self.declarations_generator.is_variable_declared(counter_variable_name):
             self.declarations_generator.add_variable_declaration(
                 counter_variable_name, 0
             )
             self.declarations_generator.add_constant_definition(
-                osc_id_symbol,
-                0,
-                "preliminary! will be updated by controller",
+                osc_id_symbol, osc_index
             )
             self.declarations_generator.add_function_call_statement(
                 "configFreqSweep",
@@ -750,44 +744,40 @@ class SampledEventHandler:
                 ),
             )
 
-        if counter_variable_name != f"index_{parameter_name}":
-            _logger.warning(
-                "Parameter name '%s' has been sanitized in generated code.",
-                parameter_name,
-            )
-
         if iteration == 0:
             self.seqc_tracker.add_variable_assignment(counter_variable_name, 0)
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
 
         self.seqc_tracker.add_function_call_statement(
             "setSweepStep",
-            args=(osc_id_symbol, f"{counter_variable_name}++"),
+            args=[osc_id_symbol, f"{counter_variable_name}++"],
             deferred=True,
         )
 
     def handle_trigger_output(self, sampled_event: AWGEvent):
         _logger.debug("  Processing trigger event %s", sampled_event)
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
         self.seqc_tracker.add_set_trigger_statement(value=sampled_event.params["state"])
 
     def handle_loop_step_start(self, sampled_event: AWGEvent):
         _logger.debug("  Processing LOOP_STEP_START EVENT %s", sampled_event)
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
         self.seqc_tracker.append_loop_stack_generator()
 
     def handle_loop_step_end(self, sampled_event: AWGEvent):
         _logger.debug("  Processing LOOP_STEP_END EVENT %s", sampled_event)
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
         self._increment_sequencer_step()
 
     def handle_push_loop(self, sampled_event: AWGEvent):
-        _logger.debug(
-            "  Processing PUSH_LOOP EVENT %s, top of stack is %s",
-            sampled_event,
-            self.seqc_tracker.current_loop_stack_generator(),
-        )
-        self.seqc_tracker.add_required_playzeros(sampled_event)
+        _logger.debug("  Processing PUSH_LOOP EVENT %s", sampled_event)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
+        self.seqc_tracker.flush_deferred_phase_changes()
         if self.current_sequencer_step is not None:
             assert self.seqc_tracker.current_time % self.sequencer_step == 0
             self.current_sequencer_step = (
@@ -809,13 +799,7 @@ class SampledEventHandler:
         )
 
     def handle_iterate(self, sampled_event: AWGEvent):
-        if (
-            any(
-                cg.num_noncomment_statements() > 0
-                for cg in self.seqc_tracker.loop_stack_generators[-1]
-            )
-            or self.seqc_tracker.deferred_function_calls.num_statements() > 0
-        ):
+        if self.seqc_tracker.top_loop_stack_generators_have_statements():
             _logger.debug(
                 "  Processing ITERATE EVENT %s, loop stack is %s",
                 sampled_event,
@@ -825,21 +809,26 @@ class SampledEventHandler:
                 self.seqc_tracker.add_comment(
                     f"ITERATE  {sampled_event.params}, current time = {self.seqc_tracker.current_time}"
                 )
-            self.seqc_tracker.add_required_playzeros(sampled_event)
+            assert sampled_event.start is not None
+            self.seqc_tracker.add_required_playzeros(sampled_event.start)
+            self.seqc_tracker.flush_deferred_phase_changes()
             self._increment_sequencer_step()
 
-            loop_generator = SeqCGenerator()
+            loop_generator = seqc_generator_from_device_and_signal_type(
+                self.device_type, self.awg.signal_type
+            )
             open_generators = self.seqc_tracker.pop_loop_stack_generators()
             _logger.debug(
-                "  Popped %s, stack is now %s",
+                "  Popped %s",
                 open_generators,
-                self.seqc_tracker.loop_stack_generators,
             )
-            loop_body = merge_generators(open_generators)
+            loop_body = merge_generators(open_generators, True)
             loop_generator.add_repeat(sampled_event.params["num_repeats"], loop_body)
             if self.emit_timing_comments:
                 loop_generator.add_comment(f"Loop for {sampled_event.params}")
             start_loop_event = self.loop_stack.pop()
+            assert start_loop_event.start is not None
+            assert sampled_event.start is not None
             delta = sampled_event.start - start_loop_event.start
             self.seqc_tracker.current_time = (
                 start_loop_event.start + sampled_event.params["num_repeats"] * delta
@@ -882,18 +871,16 @@ class SampledEventHandler:
     def handle_change_oscillator_phase(self, sampled_event: AWGEvent):
         signature = PlaybackSignature(
             waveform=None,
-            hw_oscillator=sampled_event.params["oscillator"],
-            pulse_parameters=(),
+            hw_oscillator=sampled_event.params["hw_oscillator"],
             increment_phase=sampled_event.params["phase"],
             increment_phase_params=(sampled_event.params["parameter"],),
         )
-
         # The `phase_resolution_range` is irrelevant here; for the CT phase a fixed
         # precision is used.
         signature.quantize_phase(0)
 
         ct_index = self.command_table_tracker.get_or_create_entry(signature, None)
-        self.seqc_tracker.add_command_table_execution(
+        self.seqc_tracker.add_phase_change(
             ct_index, comment=self._make_command_table_comment(signature)
         )
 
@@ -924,6 +911,7 @@ class SampledEventHandler:
             return
 
         prng_tracker = self.seqc_tracker.prng_tracker()
+        assert prng_tracker is not None
         if prng_tracker.active_sample is not None:
             section = sampled_event.params["section_name"]
             this_sample = sampled_event.params["sample_name"]
@@ -946,14 +934,20 @@ class SampledEventHandler:
 
     def handle_ppc_step_start(self, sampled_event: AWGEvent):
         assert sampled_event.type == AWGEventType.PPC_SWEEP_STEP_START
-        self.seqc_tracker.add_required_playzeros(sampled_event)
-        self.seqc_tracker.add_function_call_statement("setTrigger", [1], deferred=True)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
+        self.seqc_tracker.add_function_call_statement(
+            "setTrigger", ["1"], deferred=True
+        )
         self.shfppc_sweeper_config_tracker.add_step(**sampled_event.params)
 
     def handle_ppc_step_end(self, sampled_event: AWGEvent):
         assert sampled_event.type == AWGEventType.PPC_SWEEP_STEP_END
-        self.seqc_tracker.add_required_playzeros(sampled_event)
-        self.seqc_tracker.add_function_call_statement("setTrigger", [0], deferred=True)
+        assert sampled_event.start is not None
+        self.seqc_tracker.add_required_playzeros(sampled_event.start)
+        self.seqc_tracker.add_function_call_statement(
+            "setTrigger", ["0"], deferred=True
+        )
 
     def _register_bitshift(
         self,
@@ -994,7 +988,7 @@ class SampledEventHandler:
 
             # feedback through PQSC: assign index based on AWG number
             index_select = qa_register_bitshift // 2
-            codeword_bitshift = 2 * self.awg.awg_number + qa_register_bitshift % 2
+            codeword_bitshift = 2 * self.awg.awg_id + qa_register_bitshift % 2
 
         if local:
             self.feedback_register_config.source_feedback_register = "local"
@@ -1037,7 +1031,7 @@ class SampledEventHandler:
             raise LabOneQException(
                 f"States missing in match statement with handle {handle}. First "
                 f"state: {first}, last state: {last}, number of states: "
-                f"{len(sorted_ct_entries)}, expected {last+1}, starting from 0."
+                f"{len(sorted_ct_entries)}, expected {last + 1}, starting from 0."
             )
 
         # Check whether we already have the same states in the command table:
@@ -1066,9 +1060,11 @@ class SampledEventHandler:
 
         ev = self.match_parent_event
         start = ev.start
+        assert start is not None
         assert start >= self.seqc_tracker.current_time
         assert start % self.sequencer_step == 0
-        self.seqc_tracker.add_required_playzeros(ev)
+        self.seqc_tracker.add_required_playzeros(start)
+        self.seqc_tracker.flush_deferred_phase_changes()
         # Subtract the 3 cycles that we added (see match_schedule.py for details)
         assert self.current_sequencer_step is not None
         latency = (
@@ -1090,8 +1086,10 @@ class SampledEventHandler:
                 "Mixed feedback paths (global and local) are illegal"
             )
         self.use_zsync_feedback = use_zsync
+        assert ev.end is not None
         self.seqc_tracker.add_timing_comment(ev.end)
         self.seqc_tracker.flush_deferred_function_calls()
+        assert self.match_parent_event.end is not None
         self.seqc_tracker.current_time = self.match_parent_event.end
         self.match_parent_event = None
 
@@ -1110,21 +1108,30 @@ class SampledEventHandler:
             )
         except LabOneQException:
             pass  # Already declared, this is fine
-        self.seqc_tracker.add_required_playzeros(match_event)
-        if_generator = SeqCGenerator()
+        assert match_event.start is not None
+        assert match_event.end is not None
+        self.seqc_tracker.add_required_playzeros(match_event.start)
+        self.seqc_tracker.flush_deferred_phase_changes()
+        if_generator = seqc_generator_from_device_and_signal_type(
+            self.device_type, self.awg.signal_type
+        )
         conditions_bodies: list[tuple[str | None, SeqCGenerator]] = [
             (f"{var_name} == {state}", gen.compressed())
             for state, gen in self.match_seqc_generators.items()
             if gen.num_noncomment_statements() > 0
         ]
         # If there is no match, we just play zeros to keep the timing correct
-        play_zero_body = SeqCGenerator()
+        play_zero_body = seqc_generator_from_device_and_signal_type(
+            self.device_type, self.awg.signal_type
+        )
         play_zero_body.add_play_zero_statement(
-            match_event.end - self.seqc_tracker.current_time,
-            self.device_type,
+            match_event.end - self.seqc_tracker.current_time
         )
         conditions_bodies.append((None, play_zero_body.compressed()))
-        if_generator.add_if(*zip(*conditions_bodies))  # type: ignore
+        if_generator.add_if(
+            [cond for cond, _ in conditions_bodies],
+            [body for _, body in conditions_bodies],
+        )
         self.seqc_tracker.append_loop_stack_generator(
             always=True, generator=if_generator
         )
@@ -1144,7 +1151,7 @@ class SampledEventHandler:
             raise LabOneQException(
                 f"States missing in match statement (section {section}). First "
                 f"state: {first}, last state: {last}, number of states: "
-                f"{len(sorted_ct_entries)}, expected {last+1}, starting from 0."
+                f"{len(sorted_ct_entries)}, expected {last + 1}, starting from 0."
             )
 
         command_table_match_offset = len(self.command_table_tracker)
@@ -1156,19 +1163,23 @@ class SampledEventHandler:
             assert command_table_match_offset + idx == id2
 
         prng_tracker = self.seqc_tracker.prng_tracker()
+        assert prng_tracker is not None
         if not prng_tracker.is_committed():
             # use the PRNG output range to do the offset for us
             prng_tracker.offset = command_table_match_offset
-            prng_tracker.commit()
+            self.seqc_tracker.commit_prng()
         command_table_match_offset -= prng_tracker.offset
 
         ev = self.match_parent_event
         start = ev.start
+        assert start is not None
         assert start >= self.seqc_tracker.current_time
-        self.seqc_tracker.add_required_playzeros(ev)
+        self.seqc_tracker.add_required_playzeros(start)
+        self.seqc_tracker.flush_deferred_phase_changes()
         self.seqc_tracker.add_prng_match_command_table_execution(
             command_table_match_offset
         )
+        assert ev.end is not None
         self.seqc_tracker.add_timing_comment(ev.end)
         self.seqc_tracker.flush_deferred_function_calls()
         self.seqc_tracker.current_time = self.match_parent_event.end
@@ -1233,6 +1244,7 @@ class SampledEventHandler:
 
     def handle_sampled_events(self, sampled_events: AWGSampledEventSequence):
         # Handle events grouped by start point
+        sampled_events.sort()
         for sampled_event_list in sampled_events.sequence.values():
             _logger.debug("EventListBeforeSort: %s", sampled_event_list)
             self.sampled_event_list = sort_events(sampled_event_list)
@@ -1242,3 +1254,13 @@ class SampledEventHandler:
             _logger.debug("-End event list")
             self.handle_sampled_event_list()
         self.seqc_tracker.force_deferred_function_calls()
+
+    def resource_usage(self) -> list[ResourceUsage]:
+        if self.use_command_table:
+            return [
+                ResourceUsage(
+                    f"Command table of device '{self.awg.device_id}', AWG({self.awg.awg_id})",
+                    self.command_table_tracker.command_table_usage(),
+                ),
+            ]
+        return []

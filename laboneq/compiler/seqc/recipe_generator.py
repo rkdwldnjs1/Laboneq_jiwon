@@ -6,7 +6,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, cast
 
 from sortedcontainers import SortedDict
 from zhinst.core import __version__ as zhinst_version
@@ -248,8 +248,8 @@ class RecipeGenerator:
                 initialization.config.triggering_mode = TriggeringMode.DIO_FOLLOWER
 
         for pqsc_device_id in experiment_dao.pqscs():
-            for port in experiment_dao.pqsc_ports(pqsc_device_id):
-                follower_device_init = self._find_initialization(port["device"])
+            for follower_uid in experiment_dao.pqsc_followers(pqsc_device_id):
+                follower_device_init = self._find_initialization(follower_uid)
                 follower_device_init.config.triggering_mode = (
                     TriggeringMode.ZSYNC_FOLLOWER
                 )
@@ -445,15 +445,15 @@ class RecipeGenerator:
 
             ppchannel["sweep_config"] = shfppc_sweep_configuration.build_table()
 
-    def add_neartime_execution_step(self, rt_step: NeartimeStep):
+    def add_neartime_execution_step(self, nt_step: NeartimeStep):
         self._recipe.realtime_execution_init.append(
             RealtimeExecutionInit(
-                device_id=rt_step.device_id,
-                awg_id=rt_step.awg_id,
-                program_ref=rt_step.seqc_ref,
-                wave_indices_ref=rt_step.wave_indices_ref,
-                kernel_indices_ref=rt_step.kernel_indices_ref,
-                nt_step=rt_step.key,
+                device_id=nt_step.device_id,
+                awg_id=nt_step.awg_id,
+                program_ref=nt_step.seqc_ref,
+                wave_indices_ref=nt_step.wave_indices_ref,
+                kernel_indices_ref=nt_step.kernel_indices_ref,
+                nt_step=nt_step.key,
             )
         )
 
@@ -754,7 +754,9 @@ def calc_outputs(
                                 and output["marker_mode"] == "MARKER"
                             ):
                                 raise RuntimeError(
-                                    f"Trying to use marker and trigger on the same output channel {channel} with signal {signal_id} on device {signal_info.device.uid}"
+                                    f"Trying to use marker and trigger on the same"
+                                    f" output channel {channel} with signal"
+                                    f" {signal_id} on device {signal_info.device.uid}"
                                 )
                             else:
                                 output["marker_mode"] = "TRIGGER"
@@ -767,7 +769,9 @@ def calc_outputs(
                                 and output["marker_mode"] == "MARKER"
                             ):
                                 raise RuntimeError(
-                                    f"Trying to use marker and trigger on the same SG output channel {channel} with signal {signal_id} on device {signal_info.device.uid}"
+                                    f"Trying to use marker and trigger on the same SG"
+                                    f" output channel {channel} with signal"
+                                    f" {signal_id} on device {signal_info.device.uid}"
                                 )
                             else:
                                 output["marker_mode"] = "TRIGGER"
@@ -910,7 +914,7 @@ def generate_recipe(
             signal_type = AWGSignalType.IQ
         recipe_generator.add_awg(
             device_id=device_id,
-            awg_number=awg.awg_number,
+            awg_number=cast(int, awg.awg_id),
             signal_type=signal_type.value,
             feedback_register_config=combined_compiler_output.feedback_register_configurations.get(
                 awg.key

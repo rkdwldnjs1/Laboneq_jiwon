@@ -26,12 +26,13 @@ if TYPE_CHECKING:
         QuantumElement,
         Section,
     )
+    from laboneq.dsl.quantum.qpu import QPU
 
 
 def quantum_operation(
     f: Callable | None = None, *, broadcast: bool = True, neartime: bool = False
 ) -> Callable:
-    """Decorator that marks an method as a quantum operation.
+    """Decorator that marks a method as a quantum operation.
 
     Methods marked as quantum operations are moved into the `BASE_OPS` dictionary
     of the `QuantumOperations` class they are defined in at the end of class
@@ -96,7 +97,7 @@ class _PulseCache:
 
     @classmethod
     def experiment_or_global_cache(cls) -> _PulseCache:
-        """Return an pulse cache.
+        """Return a pulse cache.
 
         If there is an active experiment context, return its cache. Otherwise
         return the global pulse cache.
@@ -214,6 +215,10 @@ def create_pulse(
 class QuantumOperations:
     """Quantum operations for a given qubit type.
 
+    Arguments:
+        qpu:
+            The quantum processing unit (QPU).
+
     Attributes:
         QUBIT_TYPES:
             (class attribute) The classes of qubits supported by this set of
@@ -226,12 +231,13 @@ class QuantumOperations:
     QUBIT_TYPES: type[QuantumElement] | tuple[type[QuantumElement]] | None = None
     BASE_OPS: dict[str, Callable] = None
 
-    def __init__(self):
+    def __init__(self, qpu: QPU | None = None):
         if self.QUBIT_TYPES is None:
             raise ValueError(
                 "Sub-classes of QuantumOperations must set the supported QUBIT_TYPES.",
             )
 
+        self.qpu = qpu
         self._ops = {}
 
         for name, f in self.BASE_OPS.items():
@@ -242,12 +248,23 @@ class QuantumOperations:
         if cls.BASE_OPS is None:
             cls.BASE_OPS = {}
 
+        # Collect quantum operations from the class and its parent classes
+        base_ops = {}
+        for base in reversed(cls.mro()):
+            ops = getattr(base, "BASE_OPS", None)
+            if ops is None:
+                continue
+            base_ops.update(
+                {k: v for k, v in ops.items() if getattr(v, "_quantum_op", False)}
+            )
+
         quantum_ops = {
             k: v for k, v in cls.__dict__.items() if getattr(v, "_quantum_op", False)
         }
+
         for k in quantum_ops:
             delattr(cls, k)
-        cls.BASE_OPS = {**cls.BASE_OPS, **quantum_ops}
+        cls.BASE_OPS = {**base_ops, **quantum_ops}
 
         super().__init_subclass__(**kw)
 
@@ -278,6 +295,19 @@ class QuantumOperations:
     def __dir__(self):
         """Return the attributes of these quantum operations."""
         return sorted(super().__dir__() + list(self._ops.keys()))
+
+    def attach_qpu(self, qpu: QPU) -> None:
+        """Attach a QPU to the set of quantum operations."""
+        if self.qpu is None:
+            self.qpu = qpu
+        else:
+            raise ValueError(
+                "Cannot attach QPU. There is an existing QPU attached to the quantum operations. You can detach the QPU using the `detach_qpu` method."
+            )
+
+    def detach_qpu(self) -> None:
+        """Detach a QPU from the set of quantum operations."""
+        self.qpu = None
 
     def keys(self) -> list[str]:
         """Return the names of the registered quantum operations."""
@@ -449,16 +479,16 @@ class Operation:
         """
         return self._call(args, kw, omit_reserves=True)
 
-    def _duplicate_qubits(self, qubits: list[QuantumElement]) -> list[QuantumElement]:
-        """Return a list of duplicate qubits sorted by uid."""
+    def _duplicate_qubit_uids(self, qubits: list[QuantumElement]) -> list[str]:
+        """Return a list of sorted duplicate qubit uids."""
         seen_uids = set()
-        duplicate_qubits = set()
+        duplicate_qubit_uids = set()
         for q in qubits:
             if q.uid in seen_uids:
-                duplicate_qubits.add(q)
+                duplicate_qubit_uids.add(q.uid)
             else:
                 seen_uids.add(q.uid)
-        return sorted(duplicate_qubits, key=lambda q: q.uid)
+        return sorted(duplicate_qubit_uids)
 
     def _broadcast_call(
         self,
@@ -537,9 +567,9 @@ class Operation:
             )
 
         qubits = _qubits_from_args(args)
-        duplicate_qubits = self._duplicate_qubits(qubits)
-        if duplicate_qubits:
-            duplicate_uids = ", ".join(q.uid for q in duplicate_qubits)
+        duplicate_qubit_uids = self._duplicate_qubit_uids(qubits)
+        if duplicate_qubit_uids:
+            duplicate_uids = ", ".join(duplicate_qubit_uids)
             raise ValueError(
                 f"Quantum operation {self._op_name!r} was given the following"
                 f" non-unique qubits as arguments when being broadcast:"
@@ -612,9 +642,9 @@ class Operation:
                 f" The supported qubit types are: {supported_qubit_types}.",
             )
 
-        duplicate_qubits = self._duplicate_qubits(qubits)
-        if duplicate_qubits:
-            duplicate_uids = ", ".join(q.uid for q in duplicate_qubits)
+        duplicate_qubit_uids = self._duplicate_qubit_uids(qubits)
+        if duplicate_qubit_uids:
+            duplicate_uids = ", ".join(duplicate_qubit_uids)
             raise ValueError(
                 f"Quantum operation {self._op_name!r} was given the following"
                 f" non-unique qubits as arguments: {duplicate_uids}"

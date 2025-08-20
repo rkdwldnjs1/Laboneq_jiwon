@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING, Callable, overload
 
+from laboneq.dsl.calibration import Calibration
 from laboneq.core.exceptions import LabOneQException
 from laboneq.dsl.experiment import builtins
 from laboneq.dsl.quantum import QuantumElement
@@ -65,7 +66,7 @@ class ExperimentBuilder:
             If true, `exp_func` is called inside an experiment context
             using `exp_func(*args, **kw)`.
 
-            If false, `exp_func` is passed the experiment as the first
+            If false, `exp_func` is passed to the experiment as the first
             argument instead using `exp_func(exp, *args, **kw)` and no
             experiment context is active.
 
@@ -163,7 +164,7 @@ def qubit_experiment(
             If true, the decorated function `exp_func` is called
             inside an experiment context using `exp_func(*args, **kw)`.
 
-            If false, the decorated function `exp_func` is passed the
+            If false, the decorated function `exp_func` is passed to the
             experiment as the first argument instead using
             `exp_func(exp, *args, **kw)` and no experiment context is
             active.
@@ -200,6 +201,51 @@ def qubit_experiment(
         return builder(*args, **kw)
 
     return build_qubit_experiment
+
+
+def add_quantum_elements(
+    quantum_elements: QuantumElement | list[QuantumElement],
+    *,
+    experiment: Experiment | None = None,
+) -> None:
+    """Add quantum elements to an experiment.
+
+    This method adds quantum elements to an experiment, by:
+
+    - adding the quantum element signals as experiment signals
+    - adding the quantum element calibration to the experiment calibration
+
+    Arguments:
+        quantum_elements: The (list of) quantum element(s) to add.
+        experiment: The experiment (if called without an experiment context).
+    """
+    # Ensure quantum_elements is a list
+    if isinstance(quantum_elements, QuantumElement):
+        quantum_elements = [quantum_elements]
+
+    # Fetch the experiment (if in an experiment context)
+    if experiment is None:
+        experiment = builtins._active_experiment()
+        context = True
+    else:
+        context = False
+
+    # Determine the signals and calibration from the quantum elements
+    signals = _exp_signals_from_qubits(quantum_elements)
+    calibration = _calibration_from_qubits(quantum_elements)
+
+    # Add signals to the experiment
+    for signal in signals:
+        experiment.add_signal(
+            uid=signal.uid, connect_to=signal.mapped_logical_signal_path
+        )
+
+    # Add calibration to the experiment
+    if context:
+        exp_calibration = builtins.experiment_calibration()
+        exp_calibration.calibration_items.update(calibration)
+    else:
+        experiment.set_calibration(Calibration(calibration_items=calibration))
 
 
 def build(

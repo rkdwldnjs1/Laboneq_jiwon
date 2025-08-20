@@ -6,7 +6,7 @@ import concurrent
 import concurrent.futures
 from contextlib import contextmanager
 import signal
-from threading import Thread
+import threading
 from typing import Coroutine, TypeVar, Callable
 import asyncio
 
@@ -30,7 +30,7 @@ class EventLoopHolder:
     """
 
     def __init__(self):
-        self._thread: Thread | None = None
+        self._thread: threading.Thread | None = None
         self._loop = asyncio.new_event_loop()
 
     def run(self, func: Callable[..., Coroutine[None, None, T]], *args, **kwargs) -> T:
@@ -42,7 +42,7 @@ class EventLoopHolder:
 
     def _ensure_event_loop(self):
         if self._thread is None:
-            self._thread = Thread(target=self._event_loop_thread, daemon=True)
+            self._thread = threading.Thread(target=self._event_loop_thread, daemon=True)
             self._thread.start()
 
     def _event_loop_thread(self):
@@ -51,6 +51,11 @@ class EventLoopHolder:
 
     @contextmanager
     def _override_sigint_handler(self):
+        if threading.current_thread() is not threading.main_thread():
+            # SIGINT handler can only be overridden in the main thread,
+            # TODO(2K): Mechanism to interrupt the event loop running in a thread
+            yield
+            return
         orig_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._sigint_handler)
         try:
@@ -75,3 +80,15 @@ class EventLoopHolder:
                 return future.result(timeout=0.1)  # @IgnoreException
             except concurrent.futures.TimeoutError:  # noqa: PERF203
                 pass
+
+
+class EventLoopMixIn:
+    _thread_local = threading.local()
+
+    @property
+    def _event_loop(self) -> EventLoopHolder:
+        event_loop = getattr(self._thread_local, "laboneq_event_loop", None)
+        if event_loop is None:
+            event_loop = EventLoopHolder()
+            self._thread_local.laboneq_event_loop = event_loop
+        return event_loop

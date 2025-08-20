@@ -6,16 +6,12 @@ from __future__ import annotations
 import logging
 from enum import IntEnum
 from typing import Any, Iterator
-from weakref import ref
 
 import numpy as np
 
 from laboneq.controller.attribute_value_tracker import (
     AttributeName,
     DeviceAttributesView,
-)
-from laboneq.controller.communication import (
-    DaqNodeSetAction,
 )
 from laboneq.controller.devices.awg_pipeliner import AwgPipeliner
 from laboneq.controller.devices.device_utils import FloatWithTolerance, NodeCollector
@@ -25,7 +21,7 @@ from laboneq.controller.devices.device_zi import (
     delay_to_rounded_samples,
 )
 from laboneq.controller.attribute_value_tracker import DeviceAttribute
-from laboneq.controller.devices.zi_node_monitor import (
+from laboneq.controller.devices.node_control import (
     Command,
     Condition,
     NodeControlBase,
@@ -34,7 +30,7 @@ from laboneq.controller.devices.zi_node_monitor import (
     Setting,
     WaitCondition,
 )
-from laboneq.controller.recipe_processor import DeviceRecipeData, RecipeData
+from laboneq.controller.recipe_processor import RecipeData
 from laboneq.controller.util import LabOneQControllerException
 from laboneq.core.types.enums.acquisition_type import AcquisitionType
 from laboneq.data.recipe import (
@@ -86,7 +82,9 @@ class DeviceHDAWG(DeviceBase):
         super().__init__(*args, **kwargs)
         self.dev_type = "HDAWG8"
         self.dev_opts = ["MF", "ME", "SKW"]
-        self._pipeliner = AwgPipeliner(ref(self), f"/{self.serial}/awgs", "AWG")
+        self._pipeliner = [
+            AwgPipeliner(f"/{self.serial}/awgs/{awg}", f"AWG{awg}") for awg in range(4)
+        ]
         self._channels = 8
         self._multi_freq = True
         self._reference_clock_source = ReferenceClockSourceHDAWG.INTERNAL
@@ -97,17 +95,22 @@ class DeviceHDAWG(DeviceBase):
         )
 
     @property
+    def sampling_rate(self) -> float:
+        assert self._sampling_rate is not None
+        return self._sampling_rate
+
+    @property
     def has_pipeliner(self) -> bool:
         return True
 
     def pipeliner_prepare_for_upload(self, index: int) -> NodeCollector:
-        return self._pipeliner.prepare_for_upload(index)
+        return self._pipeliner[index].prepare_for_upload()
 
     def pipeliner_commit(self, index: int) -> NodeCollector:
-        return self._pipeliner.commit(index)
+        return self._pipeliner[index].commit()
 
     def pipeliner_ready_conditions(self, index: int) -> dict[str, Any]:
-        return self._pipeliner.ready_conditions(index)
+        return self._pipeliner[index].ready_conditions()
 
     def _process_dev_opts(self):
         self._check_expected_dev_opts()
@@ -124,9 +127,6 @@ class DeviceHDAWG(DeviceBase):
             self._channels = 4
 
         self._multi_freq = "MF" in self.dev_opts
-
-    def _get_num_awgs(self) -> int:
-        return self._channels // 2
 
     def _osc_group_by_channel(self, channel: int) -> int:
         # For LabOne Q SW, the AWG oscillator control is always on, in which
@@ -149,25 +149,21 @@ class DeviceHDAWG(DeviceBase):
         osc_index_base = osc_group * max_per_group
         return osc_index_base + previously_allocated
 
-    async def disable_outputs(
-        self, outputs: set[int], invert: bool
-    ) -> list[DaqNodeSetAction]:
+    def _busy_nodes(self) -> list[str]:
+        busy_nodes = []
+        for awg in self._allocated_awgs:
+            # We check busy always for both channels even if only
+            # one channel is used - overhead is minimal.
+            busy_nodes.append(f"/{self.serial}/sigouts/{awg * 2}/busy")
+            busy_nodes.append(f"/{self.serial}/sigouts/{awg * 2 + 1}/busy")
+        return busy_nodes
+
+    async def disable_outputs(self, outputs: set[int], invert: bool):
         nc = NodeCollector(base=f"/{self.serial}/")
         for ch in range(self._channels):
             if (ch in outputs) != invert:
                 nc.add(f"sigouts/{ch}/on", 0, cache=False)
-        return await self.maybe_async(nc)
-
-    def _nodes_to_monitor_impl(self) -> list[str]:
-        nodes = super()._nodes_to_monitor_impl()
-        for awg in range(self._get_num_awgs()):
-            if self._api is None:
-                nodes.append(self.get_sequencer_paths(awg).enable)
-                nodes.append(self.get_sequencer_paths(awg).ready)
-            nodes.extend(
-                self._pipeliner.control_nodes(awg, use_async_api=self._api is not None)
-            )
-        return nodes
+        await self.set_async(nc)
 
     def update_clock_source(self, force_internal: bool | None):
         if force_internal or force_internal is None and self.is_standalone():
@@ -231,7 +227,7 @@ class DeviceHDAWG(DeviceBase):
         # of the experiment. Error message: Reinitialized signal output delay on
         # channel 0 (numbered from 0)'
         # See also https://zhinst.atlassian.net/browse/HBAR-1374?focusedCommentId=41373
-        nodes = [
+        nodes: list[NodeControlBase] = [
             Prepare(f"/{self.serial}/sigouts/{channel}/on", 0)
             for channel in range(self._channels)
         ]
@@ -239,7 +235,7 @@ class DeviceHDAWG(DeviceBase):
             [
                 Setting(
                     f"/{self.serial}/system/clocks/sampleclock/freq",
-                    self._sampling_rate,
+                    self.sampling_rate,
                 ),
                 Response(f"/{self.serial}/system/clocks/sampleclock/status", 0),
             ]
@@ -260,11 +256,10 @@ class DeviceHDAWG(DeviceBase):
             )
         return nodes
 
-    async def collect_awg_after_upload_nodes(
-        self, initialization: Initialization
-    ) -> list[DaqNodeSetAction]:
+    async def set_after_awg_upload(self, recipe_data: RecipeData):
         nc = NodeCollector(base=f"/{self.serial}/")
 
+        initialization = recipe_data.get_initialization(self.uid)
         for awg in initialization.awgs or []:
             _logger.debug(
                 "%s: Configure modulation phase depending on IQ enabling on awg %d.",
@@ -275,69 +270,81 @@ class DeviceHDAWG(DeviceBase):
                 f"sines/{awg.awg * 2}/phaseshift",
                 90 if (awg.signal_type == SignalType.IQ) else 0,
             )
+            assert isinstance(awg.awg, int)
             nc.add(f"sines/{awg.awg * 2 + 1}/phaseshift", 0)
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_execution_nodes(
-        self, with_pipeliner: bool
-    ) -> list[DaqNodeSetAction]:
-        if with_pipeliner:
-            return await self.maybe_async(self._pipeliner.collect_execution_nodes())
+    async def _do_start_execution(self, with_pipeliner: bool):
+        nc = NodeCollector(base=f"/{self.serial}/")
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner:
+                nc.extend(self._pipeliner[awg_index].collect_execution_nodes())
+            else:
+                nc.add(f"awgs/{awg_index}/enable", 1, cache=False)
+        await self.set_async(nc)
 
-        return await super().collect_execution_nodes(with_pipeliner=with_pipeliner)
+    async def start_execution(self, with_pipeliner: bool):
+        # For standalone HDAWG start the execution at the emit_start_trigger stage
+        if not self.is_standalone():
+            await self._do_start_execution(with_pipeliner)
+
+    async def emit_start_trigger(self, with_pipeliner):
+        if self.is_leader() or self.is_standalone():
+            await self._do_start_execution(with_pipeliner)
 
     def conditions_for_execution_ready(
         self, with_pipeliner: bool
     ) -> dict[str, tuple[Any, str]]:
-        if with_pipeliner:
-            conditions = self._pipeliner.conditions_for_execution_ready()
-        elif self.is_async_standalone:
-            conditions = {
-                f"/{self.serial}/awgs/{awg_index}/enable": (
-                    [1, 0],
-                    f"{self.dev_repr}: AWG {awg_index + 1} failed to transition to exec and back to stop.",
+        conditions: dict[str, tuple[Any, str]] = {}
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner and not self.is_standalone():
+                conditions.update(
+                    self._pipeliner[awg_index].conditions_for_execution_ready()
                 )
-                for awg_index in self._allocated_awgs
-            }
-        else:
-            conditions = {
-                f"/{self.serial}/awgs/{awg_index}/enable": (
+            elif not self.is_standalone():
+                conditions[f"/{self.serial}/awgs/{awg_index}/enable"] = (
                     1,
-                    f"{self.dev_repr}: AWG {awg_index + 1} didn't start.",
+                    f"AWG {awg_index} didn't start.",
                 )
-                for awg_index in self._allocated_awgs
-            }
         return conditions
 
     def conditions_for_execution_done(
         self, acquisition_type: AcquisitionType, with_pipeliner: bool
     ) -> dict[str, tuple[Any, str]]:
-        if with_pipeliner:
-            conditions = self._pipeliner.conditions_for_execution_done()
-        elif self.is_async_standalone:
-            conditions = {}
-        else:
-            conditions = {
-                f"/{self.serial}/awgs/{awg_index}/enable": (
-                    0,
-                    f"{self.dev_repr}: AWG {awg_index + 1} didn't stop. Missing start trigger? Check ZSync.",
+        conditions: dict[str, tuple[Any, str]] = {}
+        for awg_index in self._allocated_awgs:
+            if with_pipeliner:
+                conditions.update(
+                    self._pipeliner[awg_index].conditions_for_execution_done(
+                        with_execution_start=self.is_standalone()
+                    )
                 )
-                for awg_index in self._allocated_awgs
-            }
+            elif self.is_standalone():
+                conditions[f"/{self.serial}/awgs/{awg_index}/enable"] = (
+                    [1, 0],
+                    f"AWG {awg_index} failed to transition to exec and back to stop.",
+                )
+            else:
+                conditions[f"/{self.serial}/awgs/{awg_index}/enable"] = (
+                    0,
+                    f"AWG {awg_index} didn't stop. Missing start trigger? Check ZSync.",
+                )
         return conditions
 
-    async def collect_execution_setup_nodes(
-        self, with_pipeliner: bool, has_awg_in_use: bool
-    ) -> list[DaqNodeSetAction]:
+    async def setup_one_step_execution(
+        self, recipe_data: RecipeData, with_pipeliner: bool
+    ):
         nc = NodeCollector(base=f"/{self.serial}/")
-        if with_pipeliner and has_awg_in_use and not self.is_standalone():
+        if (
+            with_pipeliner
+            and self._has_awg_in_use(recipe_data)
+            and not self.is_standalone()
+        ):
             nc.add("system/synchronization/source", 1)  # external
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_execution_teardown_nodes(
-        self, with_pipeliner: bool
-    ) -> list[DaqNodeSetAction]:
+    async def teardown_one_step_execution(self, with_pipeliner: bool):
         nc = NodeCollector(base=f"/{self.serial}/")
 
         if with_pipeliner and not self.is_standalone():
@@ -345,7 +352,8 @@ class DeviceHDAWG(DeviceBase):
             nc.add("system/synchronization/source", 0)
 
         if with_pipeliner:
-            nc.extend(self._pipeliner.reset_nodes())
+            for awg_index in self._allocated_awgs:
+                nc.extend(self._pipeliner[awg_index].reset_nodes())
 
         # HACK: HBAR-1427 and HBAR-2165 show that runtime checks generate
         # wrongly detected gaps when enabled during experiments with feedback.
@@ -353,21 +361,20 @@ class DeviceHDAWG(DeviceBase):
         # re-enable them in case the previous experiment had feedback.
         nc.add("raw/system/awg/runtimechecks/enable", int(self._enable_runtime_checks))
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
-    async def collect_initialization_nodes(
+    async def apply_initialization(
         self,
-        device_recipe_data: DeviceRecipeData,
-        initialization: Initialization,
         recipe_data: RecipeData,
-    ) -> list[DaqNodeSetAction]:
+    ):
         _logger.debug("%s: Initializing device...", self.dev_repr)
         nc = NodeCollector(base=f"/{self.serial}/")
 
+        device_recipe_data = recipe_data.device_settings[self.uid]
+        initialization = recipe_data.get_initialization(self.uid)
         outputs = initialization.outputs or []
         for output in outputs:
             awg_idx = output.channel // 2
-            self._allocated_awgs.add(awg_idx)
 
             nc.add(f"sigouts/{output.channel}/on", 1 if output.enable else 0)
 
@@ -485,9 +492,9 @@ class DeviceHDAWG(DeviceBase):
         # This is a prerequisite for passing AWG checks in FW on the pipeliner commit.
         # Without the pipeliner, these checks are only performed when the AWG is enabled,
         # therefore DIO could be configured after the AWG loading.
-        nc.extend(self._collect_dio_configuration_nodes(initialization, recipe_data))
+        nc.extend(self._collect_dio_configuration_nodes(initialization))
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
     def pre_process_attributes(
         self,
@@ -511,12 +518,13 @@ class DeviceHDAWG(DeviceBase):
                 value_or_param=io.gains.off_diagonal,
             )
 
-    def collect_prepare_nt_step_nodes(
+    def _collect_prepare_nt_step_nodes(
         self, attributes: DeviceAttributesView, recipe_data: RecipeData
     ) -> NodeCollector:
         nc = NodeCollector(base=f"/{self.serial}/")
-        nc.extend(super().collect_prepare_nt_step_nodes(attributes, recipe_data))
+        nc.extend(super()._collect_prepare_nt_step_nodes(attributes, recipe_data))
 
+        device_recipe_data = recipe_data.device_settings[self.uid]
         awg_iq_pair_set: set[int] = set()
         for ch in range(self._channels):
             [scheduler_port_delay, port_delay], updated = attributes.resolve(
@@ -532,11 +540,11 @@ class DeviceHDAWG(DeviceBase):
                         channel=ch,
                         dev_repr=self.dev_repr,
                         delay=output_delay,
-                        sample_frequency_hz=self._sampling_rate,
+                        sample_frequency_hz=self.sampling_rate,
                         granularity_samples=DELAY_NODE_GRANULARITY_SAMPLES,
                         max_node_delay_samples=DELAY_NODE_MAX_SAMPLES,
                     )
-                    / self._sampling_rate
+                    / self.sampling_rate
                 )
                 nc.add(f"sigouts/{ch}/delay", output_delay_rounded)
             [output_voltage_offset], updated = attributes.resolve(
@@ -550,12 +558,7 @@ class DeviceHDAWG(DeviceBase):
             awg_idx = ch // 2
             output_i = output_iq = ch % 2
             output_q = output_i ^ 1
-            if (
-                awg_idx
-                not in recipe_data.device_settings[
-                    self.device_qualifier.uid
-                ].iq_settings
-            ):
+            if awg_idx not in device_recipe_data.iq_settings:
                 # Fall back to old behavior (suitable for single channel output)
                 (
                     [output_gain_i_diagonal, output_gain_i_off_diagonal],
@@ -583,9 +586,7 @@ class DeviceHDAWG(DeviceBase):
                 if awg_idx in awg_iq_pair_set:
                     continue
                 # Set both I and Q channels at one loop
-                ch_i, ch_q = recipe_data.device_settings[
-                    self.device_qualifier.uid
-                ].iq_settings[awg_idx]
+                ch_i, ch_q = device_recipe_data.iq_settings[awg_idx]
                 (
                     [
                         output_gain_i_diagonal,
@@ -638,31 +639,20 @@ class DeviceHDAWG(DeviceBase):
                 awg_iq_pair_set.add(awg_idx)
         return nc
 
-    async def collect_awg_before_upload_nodes(
-        self, initialization: Initialization, recipe_data: RecipeData
-    ) -> list[DaqNodeSetAction]:
+    async def set_before_awg_upload(self, recipe_data: RecipeData):
         nc = NodeCollector(base=f"/{self.serial}/")
         nc.add("system/awg/oscillatorcontrol", 1)
-        return await self.maybe_async(nc)
-
-    def add_command_table_header(self, body: dict) -> dict:
-        return {
-            "$schema": "https://docs.zhinst.com/hdawg/commandtable/v1_0/schema",
-            "header": {"version": "1.0.0"},
-            "table": body,
-        }
+        await self.set_async(nc)
 
     def command_table_path(self, awg_index: int) -> str:
         return f"/{self.serial}/awgs/{awg_index}/commandtable/"
 
-    async def collect_trigger_configuration_nodes(
-        self, initialization: Initialization, recipe_data: RecipeData
-    ) -> list[DaqNodeSetAction]:
+    async def configure_trigger(self, recipe_data: RecipeData):
         nc = NodeCollector(base=f"/{self.serial}/")
 
         for awg_key, awg_config in recipe_data.awg_configs.items():
             has_no_feedback = awg_config.source_feedback_register is None
-            if (awg_key.device_uid != initialization.device_uid) or has_no_feedback:
+            if (awg_key.device_uid != self.uid) or has_no_feedback:
                 continue
 
             # HACK: HBAR-1427 and HBAR-2165 show that runtime checks generate
@@ -672,10 +662,10 @@ class DeviceHDAWG(DeviceBase):
             nc.add("raw/system/awg/runtimechecks/enable", 0)
             break
 
-        return await self.maybe_async(nc)
+        await self.set_async(nc)
 
     def _collect_dio_configuration_nodes(
-        self, initialization: Initialization, recipe_data: RecipeData
+        self, initialization: Initialization
     ) -> NodeCollector:
         _logger.debug("%s: Configuring trigger configuration nodes.", self.dev_repr)
         nc = NodeCollector(base=f"/{self.serial}/")
@@ -738,15 +728,16 @@ class DeviceHDAWG(DeviceBase):
 
         return nc
 
-    async def collect_reset_nodes(self) -> list[DaqNodeSetAction]:
+    async def reset_to_idle(self):
         nc = NodeCollector(base=f"/{self.serial}/")
         # Reset pipeliner first, attempt to set AWG enable leads to FW error if pipeliner was enabled.
-        nc.extend(self._pipeliner.reset_nodes())
+        nc.add("awgs/*/pipeliner/reset", 1, cache=False)
+        nc.add("awgs/*/pipeliner/mode", 0, cache=False)  # off
+        nc.add("awgs/*/synchronization/enable", 0, cache=False)
         nc.barrier()
         nc.add("awgs/*/enable", 0, cache=False)
         nc.add("system/synchronization/source", 0, cache=False)  # internal
-        reset_nodes = await self.maybe_async(nc)
+        await self.set_async(nc)
         # Reset errors must be the last operation, as above sets may cause errors.
         # See https://zhinst.atlassian.net/browse/HULK-1606
-        reset_nodes.extend(await super().collect_reset_nodes())
-        return reset_nodes
+        await super().reset_to_idle()
