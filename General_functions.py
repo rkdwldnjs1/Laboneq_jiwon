@@ -830,9 +830,14 @@ class ZI_QCCS(object):
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
             )
 
+            if length is None:
+                length = cavity_parameters[cavity_component]["cavity_drive_length"]
+            else :
+                length = length/npts
+
             cavity_drive_pulse_constant_chunk = pulse_library.gaussian_square(
                 uid="cavity_drive_pulse",
-                length=length/npts,
+                length=length,
                 amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
             )
             

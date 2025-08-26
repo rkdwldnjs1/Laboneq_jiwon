@@ -20,6 +20,8 @@ from laboneq.contrib.example_helpers.generate_device_setup import (
 # LabOne Q:
 from laboneq.simple import *
 from laboneq.dsl.experiment.builtins import *
+from laboneq.analysis import calculate_integration_kernels_thresholds
+
 from laboneq.contrib.example_helpers.plotting.plot_helpers import plot_simulation
 from laboneq.contrib.example_helpers.plotting.plot_helpers import plot_results
 from laboneq.contrib.example_helpers.randomized_benchmarking_helper import (
@@ -81,14 +83,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             acquisition_type=AcquisitionType.RAW,
             reset_oscillator_phase = True,
         ):
-            with exp_nopi.section(uid="nopi"):
-                with exp_nopi.section(uid="drive"):
-                    exp_nopi.reserve(signal="drive")
-                with exp_nopi.section(uid="measure", play_after="drive"):
-                    exp_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
-                    exp_nopi.acquire(
-                        signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
-                    )
+            with exp_nopi.section(uid="drive"):
+                exp_nopi.reserve(signal="drive")
+            with exp_nopi.section(uid="measure", play_after="drive"):
+                exp_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_nopi.acquire(
+                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_nopi.section(uid="relax_nopi", length=qubits_parameters[component]["reset_delay_length"]):
                 exp_nopi.reserve(signal="measure")
@@ -120,14 +121,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             acquisition_type=AcquisitionType.RAW,
             reset_oscillator_phase = True,
         ):
-            with exp_pi.section(uid="pi"):
-                with exp_pi.section(uid="drive"):
-                    exp_pi.play(signal="drive", pulse=drive_pulse)
-                with exp_pi.section(uid="measure", play_after="drive"):
-                    exp_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
-                    exp_pi.acquire(
-                        signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
-                    )
+            with exp_pi.section(uid="drive"):
+                exp_pi.play(signal="drive", pulse=drive_pulse)
+            with exp_pi.section(uid="measure", play_after="drive"):
+                exp_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_pi.acquire(
+                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_pi.section(uid="relax_pi", length=qubits_parameters[component]["reset_delay_length"]):
                 exp_pi.reserve(signal="measure")
@@ -191,14 +191,14 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             averaging_mode=AveragingMode.SINGLE_SHOT,
             acquisition_type=AcquisitionType.INTEGRATION
         ):
-            with exp_ss_nopi.section(uid="nopi"):
-                with exp_ss_nopi.section(uid="drive"):
-                    exp_ss_nopi.reserve(signal="drive")
-                with exp_ss_nopi.section(uid="measure", play_after="drive"):
-                    exp_ss_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
-                    exp_ss_nopi.acquire(
-                        signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
-                    )
+            
+            with exp_ss_nopi.section(uid="drive"):
+                exp_ss_nopi.reserve(signal="drive")
+            with exp_ss_nopi.section(uid="measure", play_after="drive"):
+                exp_ss_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_ss_nopi.acquire(
+                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_ss_nopi.section(uid="relax_nopi", length=qubits_parameters[component]["reset_delay_length"]):
                 exp_ss_nopi.reserve(signal="measure")
@@ -230,14 +230,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             averaging_mode=AveragingMode.SINGLE_SHOT,
             acquisition_type=AcquisitionType.INTEGRATION
         ):
-            with exp_ss_pi.section(uid="pi"):
-                with exp_ss_pi.section(uid="drive"):
-                    exp_ss_pi.play(signal="drive", pulse=drive_pulse)
-                with exp_ss_pi.section(uid="measure", play_after="drive"):
-                    exp_ss_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
-                    exp_ss_pi.acquire(
-                        signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
-                    )
+            with exp_ss_pi.section(uid="drive"):
+                exp_ss_pi.play(signal="drive", pulse=drive_pulse)
+            with exp_ss_pi.section(uid="measure", play_after="drive"):
+                exp_ss_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_ss_pi.acquire(
+                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_ss_pi.section(uid="relax_pi", length=qubits_parameters[component]["reset_delay_length"]):
                 exp_ss_pi.reserve(signal="measure")
@@ -412,6 +411,144 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             print(f"residual population : {min(popt2[0]/popt2[3], popt2[3]/popt2[0])}")
 
             plt.legend()
+
+
+    def test_consecutive_measurements(self, npts_exponent, phase = 0, acquire_delay = 0,
+                                      first_amp = 0,
+                                      second_amp = 0, is_plot_simulation = False):
+
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters 
+        component = list(qubits_parameters.keys())[self.which_qubit]
+        
+        
+        ## define pulses used for experiment
+        readout_pulse = pulse_library.gaussian_square(
+            uid="readout_pulse", 
+            length=qubits_parameters[component]["readout_pulse_length"], 
+            amplitude=qubits_parameters[component]["readout_amp"], 
+        )
+        # readout integration weights - here simple square pulse, i.e. same weights at all times
+        readout_weighting_function = pulse_library.gaussian_square(
+            uid="readout_weighting_function", 
+            length=qubits_parameters[component]["readout_integration_length"],
+            amplitude=qubits_parameters[component]["readout_integration_amp"], 
+        )
+        drive_pulse = pulse_library.drag(uid="drive_pulse", 
+                                             length = qubits_parameters[component]['drive_pulse_length'], 
+                                             amplitude = qubits_parameters[component]["drive_amp"],
+                                             beta = qubits_parameters[component]["drive_beta"],
+                                             )
+        
+        phase = phase * np.pi / 180
+
+        exp_ss_pi = Experiment(
+                uid="pi_experiment",
+                signals=[
+                    ExperimentSignal(uid="drive"),
+                    ExperimentSignal(uid="measure"),
+                    ExperimentSignal(uid="acquire"),
+                ],
+            )
+        
+        with exp_ss_pi.acquire_loop_rt(
+            uid="shots",
+            count=pow(2, npts_exponent),
+            averaging_mode=AveragingMode.SINGLE_SHOT,
+            acquisition_type=AcquisitionType.INTEGRATION
+        ):
+            
+            with exp_ss_pi.section(uid="drive"):
+                exp_ss_pi.play(signal="drive", pulse=drive_pulse, amplitude=first_amp)
+            with exp_ss_pi.section(uid="measure_1", play_after="drive"):
+                exp_ss_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_ss_pi.acquire(
+                    signal="acquire", handle="ac_pi_1", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
+            if acquire_delay > 0:
+                with exp_ss_pi.section(uid="acquire_delay", length=acquire_delay):
+                    exp_ss_pi.reserve(signal="acquire")
+
+            with exp_ss_pi.section(uid="drive_2", play_after="acquire_delay"):
+                exp_ss_pi.play(signal="drive", pulse=drive_pulse, amplitude=second_amp)
+
+            with exp_ss_pi.section(uid="measure_2", play_after="drive_2"):
+                exp_ss_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                exp_ss_pi.acquire(
+                    signal="acquire", handle="ac_pi_2", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                )
+
+            # relax time after readout - for signal processing and qubit relaxation to ground state
+            with exp_ss_pi.section(uid="relax_pi", length=qubits_parameters[component]["reset_delay_length"]):
+                exp_ss_pi.reserve(signal="measure")
+        
+        signal_map = self.signal_map(component)
+
+        exp_ss_pi.set_signal_map(signal_map)
+
+        compiled_experiment_test_pi = self.session.compile(exp_ss_pi)
+
+        test_pi_results = self.session.run(compiled_experiment_test_pi)
+
+        self.test_pi_results_1 = test_pi_results.get_data("ac_pi_1")
+        self.test_pi_results_2 = test_pi_results.get_data("ac_pi_2")
+
+        if is_plot_simulation:
+            self.simulation_plot(compiled_experiment_test_pi, start_time=0, length=20e-6, component=component)
+            show_pulse_sheet("test_consecutive_measure", compiled_experiment_test_pi)
+
+    
+    def plot_test_consecutive_measure(self, num_of_bins = 300, threshold = 0):
+        
+        test_pi_results_1 = self.test_pi_results_1
+        test_pi_results_2 = self.test_pi_results_2
+
+        I_results_1 = np.real(test_pi_results_1)
+        Q_results_1 = np.imag(test_pi_results_1)
+
+        I_results_2 = np.real(test_pi_results_2)
+        Q_results_2 = np.imag(test_pi_results_2)
+
+        fig, ax = plt.subplots(1, 2, figsize=(16, 10))
+
+        ax[0].scatter(I_results_1, Q_results_1, color="b", alpha = 0.3, marker = '.', label = "1st measurement")
+        ax[0].scatter(I_results_2, Q_results_2, color="r", alpha = 0.3, marker = '.', label = "2nd measurement")
+        ax[0].set_xlim([-np.max([np.sqrt(I_results_1**2 + Q_results_1**2), np.sqrt(I_results_2**2 + Q_results_2**2)])*1.3,
+                    np.max([np.sqrt(I_results_1**2 + Q_results_1**2), np.sqrt(I_results_2**2 + Q_results_2**2)])*1.3])
+        ax[0].set_ylim([-np.max([np.sqrt(I_results_1**2 + Q_results_1**2), np.sqrt(I_results_2**2 + Q_results_2**2)])*1.3,
+                    np.max([np.sqrt(I_results_1**2 + Q_results_1**2), np.sqrt(I_results_2**2 + Q_results_2**2)])*1.3])
+        ax[0].set_aspect('equal', 'box')
+
+        ax[0].tick_params(axis='both', which='major', labelsize=10)
+        ax[0].tick_params(axis='both', which='minor', labelsize=10)
+        ax[0].set_xlabel("I (a.u.)", fontsize=20)
+        ax[0].set_ylabel("Q (a.u.)", fontsize=20)
+
+        ax[0].legend()
+
+        if self.which_data == "I":
+            data_1 = I_results_1
+            data_2 = I_results_2
+            IQ = "I"
+        else:
+            data_1 = I_results_2
+            data_2 = Q_results_2
+            IQ = "Q"
+
+        nopi_hist_data = ax[1].hist(data_1, bins = num_of_bins, color = "b", alpha = 0.5)
+        pi_hist_data = ax[1].hist(data_2, bins = num_of_bins, color = "r", alpha = 0.5)
+
+        self.data_1 = np.mean(data_1)
+        self.data_2 = np.mean(data_2)
+
+        ax[1].plot([np.mean(data_1), np.mean(data_1)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '-k')
+        ax[1].plot([np.mean(data_2), np.mean(data_2)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '--k')
+
+        ax[1].tick_params(axis='both', which='major', labelsize=10)
+
+        ax[1].set_xlabel(f"{IQ} (a.u.)", fontsize=20)
+        ax[1].set_ylabel("Counts", fontsize=20)
+
 
 # In[] T1 Measurement
 

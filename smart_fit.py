@@ -27,8 +27,7 @@ class sFit():
         self.ydata = ydata
         self.t0 = xdata[0]
         self.delta_t = np.diff(xdata)[0]
-        
-        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and (self.fit_type != 'ExpCos') and (self.fit_type != 'Gaussian') and (self.fit_type != 'GaussianCos') and (self.fit_type != 'Storage_Characterization'):
+        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and (self.fit_type != 'ExpCos') and (self.fit_type != 'ExpExp') and (self.fit_type != 'Gaussian') and (self.fit_type != 'GaussianCos') and (self.fit_type != 'Storage_Characterization'):
             raise Exception("No such a type!")
         
         func = self.fit_function()
@@ -47,6 +46,8 @@ class sFit():
             return self.Cos
         elif self.fit_type == 'Exp':
             return self.Exp
+        elif self.fit_type == 'ExpExp':
+            return self.ExpExp
         elif self.fit_type == 'ExpCos':
             return self.ExpCos
         elif self.fit_type == 'Gaussian':
@@ -80,6 +81,16 @@ class sFit():
             Offset = (max(self.ydata) - min(self.ydata))/2
             
             return [Amp, Gamma, Offset]
+        
+        elif self.fit_type == 'ExpExp':
+            
+            Amp = max(self.ydata) - min(self.ydata)
+            alphaSize = 1
+            kappa = 1e5
+            Offset = (max(self.ydata) - min(self.ydata))/2
+
+            return [Amp, alphaSize, kappa, Offset]
+        
         
         elif self.fit_type == 'ExpCos':
             
@@ -199,7 +210,7 @@ class sFit():
     def ExpCos(self,  t, A, f, gamma, delta, offset): # 5 args
         return (A*exp(-t*gamma)*cos((t-self.t0)*2*pi*f+delta) + offset).astype(np.float64)
     def ExpExp(self,  t, A, alphaSize , kappa, offset ):
-        return (A*(1-exp( - abs( alphaSize ) * exp( -kappa*t ) )) + offset).astype(np.float64)
+        return (A*(exp( - abs( alphaSize ) * exp( -kappa*t ) )) + offset).astype(np.float64)
     def Gaussian(self, t, A, sigma, offset, t0): # 3 args
         return (A * exp(-((t-t0)**2)/(2*sigma**2)) + offset).astype(np.float64)
     def GaussianCos(self, t, A, f, sigma, delta, offset, t0): # 5 args
