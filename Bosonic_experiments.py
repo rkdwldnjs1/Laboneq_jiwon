@@ -261,7 +261,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
             ax2.plot(time*1e6, sfit1.func(time, *popt))
             an = ax2.annotate((f'T1 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us]\n'
-                               r'$/frac{/kappa}{2/pi}$' + f' = {decay_rate/2/np.pi*1e-3:.2f}±{decay_rate_err/2/np.pi*1e-3:.3f}[kHz]\n'
+                               r'$\frac{\kappa}{2\pi}$' + f' = {decay_rate/2/np.pi*1e-3:.2f}±{decay_rate_err/2/np.pi*1e-3:.3f}[kHz]\n'
                                f'alpha = {alpha_size:.2f}±{alpha_size_err:.2f}'), 
                              xy = (np.average(time*1e6), np.average((data_1-data_0)[0:10]) ),
                              size = 16)
@@ -413,6 +413,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                        freq_start = 0, # freq in Hz
                        freq_stop = 0,
                        freq_npts = 0,
+                       chunk_count = 2,
                        is_qubit2 = False,
                        qubit2=None,
                        auto_chunking=True,
@@ -507,7 +508,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ):
             with exp_cavity_pi_nopi.sweep(uid="crosskerr_check", parameter=sweep_case_2):
                 with exp_cavity_pi_nopi.sweep(uid="on_off_pi", parameter=sweep_case_1):
-                    with exp_cavity_pi_nopi.sweep(uid="sweep_freq", parameter=sweep_freq_cases, auto_chunking= auto_chunking):
+                    with exp_cavity_pi_nopi.sweep(uid="sweep_freq", parameter=sweep_freq_cases, chunk_count=chunk_count, auto_chunking=auto_chunking):
 
                         with exp_cavity_pi_nopi.section(uid="pi_nopi_cavity"):
 
@@ -515,6 +516,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                             def play_cavity_pi_nopi(exp_case_num, sweep_value):
 
                                 if exp_case_num == 0:  # nopi case
+
                                     with exp_cavity_pi_nopi.section():
                                         exp_cavity_pi_nopi.play(signal="cavity_drive", 
                                                                 pulse=cond_disp_pulse, 
@@ -554,15 +556,17 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                             @on_off_cond_pi_pulse(sweep_case_2, exp=exp_cavity_pi_nopi)
                             def play_crosskerr_check(v):
                                 if v == 0:
+                                    self.handle_2 = "x"
                                     pass
                                 elif v == 1:
+                                    self.handle_2 = "o"
                                     exp_cavity_pi_nopi.play(signal="drive", pulse=cond_pi_pulse)
                     
                         with exp_cavity_pi_nopi.section(uid="measure", play_after="pi_nopi_cavity"):
                             exp_cavity_pi_nopi.play(signal="measure", pulse=readout_pulse, phase=phase)
                             exp_cavity_pi_nopi.acquire(
                                 signal="acquire",
-                                handle="cavity_pi_nopi",
+                                handle=f"cavity_pi_nopi",
                                 kernel=readout_weighting_function,
                             )
 
@@ -588,17 +592,22 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         exp_cavity_pi_nopi.set_signal_map(signal_map)
 
-        compiled_experiment_cavity_pi_nopi = self.session.compile(exp_cavity_pi_nopi)
+        self.compiled_experiment_cavity_pi_nopi = self.session.compile(exp_cavity_pi_nopi)
 
-        self.cavity_pi_nopi_results = self.session.run(compiled_experiment_cavity_pi_nopi)
+        self.cavity_pi_nopi_results = self.session.run(self.compiled_experiment_cavity_pi_nopi)
 
         if is_plot_simulation:
-            self.simulation_plot(compiled_experiment_cavity_pi_nopi, start_time=0, length=20e-6)
-            show_pulse_sheet("cavity_pinopi", compiled_experiment_cavity_pi_nopi)
+            self.simulation_plot(self.compiled_experiment_cavity_pi_nopi, start_time=0, length=20e-6)
+            show_pulse_sheet("cavity_pinopi", self.compiled_experiment_cavity_pi_nopi, max_events_to_publish=100000)
                     
     def plot_cavity_pi_nopi(self):
 
         self.cavity_pi_nopi_data = self.cavity_pi_nopi_results.get_data("cavity_pi_nopi")
+
+        if self.which_data == "I":
+            data = np.real(self.cavity_pi_nopi_data)
+        else:
+            data = np.imag(self.cavity_pi_nopi_data)
 
         if self.which_data == "I":
             data = np.real(self.cavity_pi_nopi_data)
@@ -2192,6 +2201,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                                     alpha = 1, # for cat state
                                     beta = 1, # for cat state
                                     qubit_phase = 0,
+                                    is_autochunking = False,
                                     is_correction = False,
                                     is_plot_simulation=False):
         
@@ -2294,56 +2304,56 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             acquisition_type=AcquisitionType.INTEGRATION,
             reset_oscillator_phase=True,
         ):
-            with exp_wigner_characteristic_function.sweep(uid="correction", parameter=sweep_case):
-                with exp_wigner_characteristic_function.sweep(uid="amplitude_sweep", parameter=amplitude_sweep, auto_chunking = True, reset_oscillator_phase=True):
+            # with exp_wigner_characteristic_function.sweep(uid="correction", parameter=sweep_case):
+            with exp_wigner_characteristic_function.sweep(uid="amplitude_sweep", parameter=amplitude_sweep, auto_chunking = is_autochunking, reset_oscillator_phase=True):
 
-                    if is_coherent_state:
-                        displaced_coherent_state()
-                    elif is_schrodinger_cat_state:
-                        schrodinger_cat_state()
-                    elif is_schrodinger_cat_state_2:
-                        schrodinger_cat_state_2()
-                    elif is_cat_state:
-                        cat_state()
+                if is_coherent_state:
+                    displaced_coherent_state()
+                elif is_schrodinger_cat_state:
+                    schrodinger_cat_state()
+                elif is_schrodinger_cat_state_2:
+                    schrodinger_cat_state_2()
+                elif is_cat_state:
+                    cat_state()
 
-                    #### wigner function measurement ####
-                    #### post-selection ####
+                #### wigner function measurement ####
+                #### post-selection ####
 
-                    with exp_wigner_characteristic_function.section(uid="post_measure", play_after="preparation"):
-                        exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
-                        exp_wigner_characteristic_function.acquire(signal="acquire",
-                                                handle="post_selection",
-                                                kernel=readout_weighting_function)
+                with exp_wigner_characteristic_function.section(uid="post_measure", play_after="preparation"):
+                    exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
+                    exp_wigner_characteristic_function.acquire(signal="acquire",
+                                            handle="post_selection",
+                                            kernel=readout_weighting_function)
+                
+                with exp_wigner_characteristic_function.section(uid="acquire_delay", length=wait_length):
+                    exp_wigner_characteristic_function.reserve(signal="acquire")
+
+                # with exp_wigner_characteristic_function.section(uid="wait", length = wait_length, play_after="preparation"):
+                #     exp_wigner_characteristic_function.reserve(signal="cavity_drive")
+                #     exp_wigner_characteristic_function.reserve(signal="drive")
+
+
+                if is_wigner_function:
+
+                    self.wigner_function(exp=exp_wigner_characteristic_function, cavity_drive_pulse=cavity_drive_pulse, 
+                                        pi2_pulse=pi2_pulse, amplitude_sweep=amplitude_sweep, sweep_case=sweep_case,
+                                        prev_uid="acquire_delay")
+                else:
+
+                    self.characteristic_function(exp=exp_wigner_characteristic_function,
+                                                pi2_pulse=pi2_pulse, pi_pulse=pi_pulse, 
+                                                cond_disp_pulse=cond_disp_pulse,
+                                                amplitude_sweep=amplitude_sweep, qubit_phase = qubit_phase,
+                                                prev_uid="acquire_delay")
+
+                with exp_wigner_characteristic_function.section(uid="measure", play_after="qubit_excitation_2"):
+                    exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
+                    exp_wigner_characteristic_function.acquire(signal="acquire",
+                                            handle="wigner_characteristic_function_measurement",
+                                            kernel=readout_weighting_function)
                     
-                    with exp_wigner_characteristic_function.section(uid="acquire_delay", length=wait_length):
-                        exp_wigner_characteristic_function.reserve(signal="acquire")
-
-                    # with exp_wigner_characteristic_function.section(uid="wait", length = wait_length, play_after="preparation"):
-                    #     exp_wigner_characteristic_function.reserve(signal="cavity_drive")
-                    #     exp_wigner_characteristic_function.reserve(signal="drive")
-
-
-                    if is_wigner_function:
-
-                        self.wigner_function(exp=exp_wigner_characteristic_function, cavity_drive_pulse=cavity_drive_pulse, 
-                                            pi2_pulse=pi2_pulse, amplitude_sweep=amplitude_sweep, sweep_case=sweep_case,
-                                            prev_uid="acquire_delay")
-                    else:
-
-                        self.characteristic_function(exp=exp_wigner_characteristic_function,
-                                                    pi2_pulse=pi2_pulse, pi_pulse=pi_pulse, 
-                                                    cond_disp_pulse=cond_disp_pulse,
-                                                    amplitude_sweep=amplitude_sweep, qubit_phase = qubit_phase,
-                                                    prev_uid="acquire_delay")
-
-                    with exp_wigner_characteristic_function.section(uid="measure", play_after="qubit_excitation_2"):
-                        exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
-                        exp_wigner_characteristic_function.acquire(signal="acquire",
-                                                handle="wigner_characteristic_function_measurement",
-                                                kernel=readout_weighting_function)
-                        
-                    with exp_wigner_characteristic_function.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
-                        exp_wigner_characteristic_function.reserve(signal="measure")
+                with exp_wigner_characteristic_function.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                    exp_wigner_characteristic_function.reserve(signal="measure")
 
         signal_map = {
             "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
@@ -2374,16 +2384,37 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         self.wigner_characteristic_function_data = self.wigner_characteristic_function_results.get_data("wigner_characteristic_function_measurement")
         
-        data = np.real(np.average(self.wigner_characteristic_function_data, axis=0, keepdims=True))
+        # data = np.real(np.average(self.wigner_characteristic_function_data, axis=0, keepdims=True))
+
+        # data = np.average(self.wigner_characteristic_function_data, axis=0, keepdims=False)
+
+        if self.which_data == "I":
+            data = np.real(np.mean(self.wigner_characteristic_function_data, axis = 0))
+        else:
+            data = np.imag(np.mean(self.wigner_characteristic_function_data, axis = 0))
+
+        # averaged_nums = len(self.cavity_T1_results.acquired_results['cavity_T1'].axis[0])
+        # # npts = len(self.T1_results.acquired_results['ac_T1'].axis[1])
+
+        # self.cavity_T1_data = self.cavity_T1_results.get_data("cavity_T1") # (2^N, npts) array
+        # # time = self.cavity_T1_results.acquired_results['cavity_T1'].axis[1]
+        # time = self.cavity_T1_results.acquired_results['cavity_T1'].axis[2]
+
+
+        # data_0 = np.real(np.mean(self.cavity_T1_data, axis = 0)[0]) # v ==0
+        # data_1 = np.real(np.mean(self.cavity_T1_data, axis = 0)[1]) # v ==1
+        # std_data_0 = np.real(np.std(self.cavity_T1_data, axis = 0)[0]/np.sqrt(averaged_nums))
+        # std_data_1 = np.real(np.std(self.cavity_T1_data, axis = 0)[1]/np.sqrt(averaged_nums))
+
+        # data = np.average(data, axis=0, keepdims=False)
 
         # if self.which_data == "I":
         #     data = np.real(self.wigner_characteristic_function_data)
         # else:
         #     data = np.imag(self.wigner_characteristic_function_data)
         
-        # data = np.average(data, axis=0, keepdims=False)
 
-        amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[2]
+        amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[1]
 
 
         if self.is_wigner_function:

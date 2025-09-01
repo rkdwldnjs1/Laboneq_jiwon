@@ -78,7 +78,7 @@ physical_ports = {
             "voltage_offset": 0,
         },
         "q1":{ # 2nd control line port
-            "freq_LO": 4.4e9,
+            "freq_LO": 4.2e9,
             "port_delay": 0e-9, # Not currently supported on SHFSG output channels.
             "port_mode": None,
             "delay_signal": None, 
@@ -134,31 +134,31 @@ qubits_parameters = {
 
         #port 1 (15-1)
 
-        "ge_frequency" : 4.394e9 - 0.2e6,
+        "ge_frequency" : 4.3835e9 - 1.127e6,
         "ef_frequency" : 4.394e9, #4.275e9, #4.3865e9,
-        "readout_frequency" : 7.66463e9-0.6e6, 
+        "readout_frequency" : 7.66437e9, 
         ### readout parameters ###
-        "readout_amp" : 0.27, #0.18,
+        "readout_amp" : 0.34, #0.18,
         'readout_pulse_length': 1400e-9,
         "readout_integration_length": (1200)*1e-9,
         "readout_integration_amp": 1,
-        "readout_phase": (10) * np.pi/180,
+        "readout_phase": (120) * np.pi/180,
         ### drive parameters ###
-        "drive_amp" : 0.62, 
+        "drive_amp" : 0.77, 
         "drive_pulse_length": 64e-9,
-        "drive_beta": 0.06,
+        "drive_beta": 0.03,
         
         "pi2_length": 64e-9,
-        "pi2_amp": 0.307,
-        "pi2_beta": 0.06,
+        "pi2_amp": 0.385,
+        "pi2_beta": 0.03,
 
         "pi_length": 64e-9,
-        "pi_amp": 0.614,
-        "pi_beta": 0.06,
+        "pi_amp": 0.77,
+        "pi_beta": 0.03,
 
         "cond_pi_length": 2048e-9,
-        "cond_pi_amp": 0.0203,
-        "cond_pi_beta": 0.06,
+        "cond_pi_amp": 0.025,
+        "cond_pi_beta": 0.0,
 
         "rabi_drive_amp": 0.1,
         "ramp_length": 10e-9,
@@ -178,33 +178,33 @@ qubits_parameters = {
 
         #port 1 (20-2)
 
-        "ge_frequency" : 4.5919e9 + 0.05e6 - 0.029e6,
+        "ge_frequency" : 4.5919e9 + 0.05e6 ,
         "ef_frequency" : 4.5919e9, #4.275e9, #4.3865e9,
         "readout_frequency" : 7.636307e9, 
         ### readout parameters ###
-        "readout_amp" : 0.85, #0.18,
+        "readout_amp" : 0.75, #0.18,
         'readout_pulse_length': 1400e-9,
         "readout_integration_length": (1200)*1e-9,
         "readout_integration_amp": 1,
-        "readout_phase": (0) * np.pi/180,
+        "readout_phase": (30) * np.pi/180,
         ### drive parameters ###
         "drive_amp" : 0.352, 
         "drive_pulse_length": 64e-9,
         "drive_beta": 0.04,
         
         "pi2_length": 64e-9,
-        "pi2_amp": 0.176,
+        "pi2_amp": 0.1755,
         "pi2_beta": 0.04,
 
         "pi_length": 64e-9,
-        "pi_amp": 0.352,
+        "pi_amp": 0.351,
         "pi_beta": 0.04,
 
         "cond_pi_length": 1024e-9,
-        "cond_pi_amp": 0.025,
-        "cond_pi_beta": 0.0,
+        "cond_pi_amp": 0.023,
+        "cond_pi_beta": 0.04,
 
-        "rabi_drive_amp": 0.05,
+        "rabi_drive_amp": 0.1,
         "ramp_length": 10e-9,
         ### extra parameters ###
         "reset_delay_length": 200e-6,
@@ -249,7 +249,7 @@ qubits_parameters = {
         "rabi_drive_amp": 0.1,
         "ramp_length": 0e-9,
         ### extra parameters ###
-        "reset_delay_length": 20*200e-6,
+        "reset_delay_length": 200e-6,
 
         "is_cr" : False,
         "cr" : {
@@ -262,43 +262,19 @@ qubits_parameters = {
 }
 
 cavity_parameters = {
-    'm0': { # mm2
+
+    'm0': { # mm2 - qubit 4.394GHz
         "mode_frequency": 6.795139e9, # omega_d
         "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
-        "cavity_drive_amp": 0.193*4.5, #(this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_cavity_drive_amp": 0.193, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
-
-        "cond_disp_pulse_length": 280e-9, #200e-9,
-        "cond_disp_pulse_amp": 0.8, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_CNOD_amp": 0.33, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
-
-        # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
-        "cavity_mode_chi": -0.1e6, #-0.824e6,
-        "cond_disp_pulse_frequency": -0.1e6, # driving only cavity mode of ground state in driving freq(mode_frequency) frame.
-        "cond_disp_pulse_detuning": 0.5e6,
-        "cond_disp_pulse_sigma": 2,
-
-        "sideband_length": 1e-6,
-        "sideband_frequency_l" : 10e6, # input unit is Hz
-        "sideband_frequency_h" : 10e6,
-        "sideband_amp_l" : 0.1,
-        "sideband_amp_h" : 0.1,
-        "sideband_phase" : 0, # in radians
-
-        "reset_delay_length": 400e-6,
-    },
-    'm1': { # mm1
-        "mode_frequency": 5.153319e9 - 0.24e6 - 0.18e6, # omega_d
-        "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
-        "cavity_drive_amp": 0.1, #(this is the maximum amplitude range, and this goes to amp of experiment)
+        "cavity_drive_amp": 0.1758*4.5, #(this is the maximum amplitude range, and this goes to amp of experiment)
         "alpha_1_cavity_drive_amp": 1, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
 
-        "cond_disp_pulse_length": 200e-9, #200e-9,
+        "cond_disp_pulse_length": 360e-9, #200e-9,
         "cond_disp_pulse_amp": 0.8, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_CNOD_amp": 0.0964, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+        "alpha_1_CNOD_amp": 1, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
 
         # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
-        "cavity_mode_chi": -0.18e6, #-0.824e6,
+        "cavity_mode_chi": -0.0e6, #-0.824e6,
         "cond_disp_pulse_frequency": -0.0e6, # driving only cavity mode of ground state in driving freq(mode_frequency) frame.
         "cond_disp_pulse_detuning": 0.5e6,
         "cond_disp_pulse_sigma": 2,
@@ -311,7 +287,59 @@ cavity_parameters = {
         "sideband_phase" : 0, # in radians
 
         "reset_delay_length": 400e-6,
-    }
+    },
+
+    # 'm0': { # mm2 - qubit 4.394GHz
+    #     "mode_frequency": 6.795139e9, # omega_d
+    #     "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
+    #     "cavity_drive_amp": 0.193*4.5, #(this is the maximum amplitude range, and this goes to amp of experiment)
+    #     "alpha_1_cavity_drive_amp": 0.193, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
+
+    #     "cond_disp_pulse_length": 280e-9, #200e-9,
+    #     "cond_disp_pulse_amp": 0.8, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
+    #     "alpha_1_CNOD_amp": 0.33, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+
+    #     # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
+    #     "cavity_mode_chi": -0.1e6, #-0.824e6,
+    #     "cond_disp_pulse_frequency": -0.1e6, # driving only cavity mode of ground state in driving freq(mode_frequency) frame.
+    #     "cond_disp_pulse_detuning": 0.5e6,
+    #     "cond_disp_pulse_sigma": 2,
+
+    #     "sideband_length": 1e-6,
+    #     "sideband_frequency_l" : 10e6, # input unit is Hz
+    #     "sideband_frequency_h" : 10e6,
+    #     "sideband_amp_l" : 0.1,
+    #     "sideband_amp_h" : 0.1,
+    #     "sideband_phase" : 0, # in radians
+
+    #     "reset_delay_length": 400e-6,
+    # },
+
+    'm1': { # mm1
+        "mode_frequency": 5.153319e9 - 0.24e6, # omega_d
+        "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
+        "cavity_drive_amp": 0.0895*4.5, #(this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_cavity_drive_amp": 0.0895, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
+
+        "cond_disp_pulse_length": 200e-9, #200e-9,
+        "cond_disp_pulse_amp": 0.8, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_CNOD_amp": 0.0964, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+
+        # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
+        "cavity_mode_chi": -0.18e6, #-0.824e6,
+        "cond_disp_pulse_frequency": -0.18e6, # driving only cavity mode of ground state in driving freq(mode_frequency) frame.
+        "cond_disp_pulse_detuning": 0.5e6,
+        "cond_disp_pulse_sigma": 2,
+
+        "sideband_length": 1e-6,
+        "sideband_frequency_l" : 10e6, # input unit is Hz
+        "sideband_frequency_h" : 10e6,
+        "sideband_amp_l" : 0.1,
+        "sideband_amp_h" : 0.1,
+        "sideband_phase" : 0, # in radians
+
+        "reset_delay_length": 400e-6,
+    },
 
 }
 
@@ -334,8 +362,8 @@ my_run.prop_delay_calibration(line = "readout", average_exponent=12)
 
 
 # %%
-my_run.nopi_pi(average_exponent=11, phase = 10, is_plot_simulation=False) # used for 2^n averages, n=average_exponent, maximum: n = 19
-my_run.single_shot_nopi_pi(npts_exponent = 12, phase = 10)
+my_run.nopi_pi(average_exponent=11, phase = 120, is_plot_simulation=False) # used for 2^n averages, n=average_exponent, maximum: n = 19
+my_run.single_shot_nopi_pi(npts_exponent = 12, phase = 120)
 my_run.plot_nopi_pi(npts = 100)
 
 # In[]
@@ -362,10 +390,10 @@ my_run.Pi_cal(average_exponent=12, npts = 12, is_plot_simulation=False, is_cond_
 my_run.plot_Pi_cal()
 
 # In[]
-my_run.Ramsey(is_echo = True, n_pi_pulse=1, # for CPMG
-              qubit_phase = np.pi/2, # 0 CP, pi/2 CPMG
-              detuning = 0.5e6, 
-              average_exponent=11, duration = 20e-6, npts = 101,
+my_run.Ramsey(is_echo = False, n_pi_pulse=1, # for CP or CPMG
+              qubit_phase = 0, # 0 CP, pi/2 CPMG
+              detuning = 0.25e6, 
+              average_exponent=11, duration = 50e-6, npts = 151,
               is_zz_interaction= False,
               control_qubit= 1,
               is_plot_simulation= False)
@@ -374,19 +402,19 @@ my_run.plot_Ramsey()
 # In[]
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.3
 
-my_run.Ramsey_with_photon(is_echo = True,
+my_run.Ramsey_with_photon(is_echo = False,
               detuning = 0.5e6,
               cavity_freq_detuning=20e6, # memory mode weak driving
-              average_exponent=11, duration = 10e-6, npts = 50, #duration/npts = integer
+              average_exponent=11, duration = 20e-6, npts = 100, #duration/npts = integer
               is_plot_simulation= False)
 
 my_run.plot_Ramsey(is_ramsey_with_photon = True)
 
 # In[]
-my_run.Ramsey_amp_sweep(is_echo = False, detuning = 0.5e6, cavity_freq_detuning=20e6, # memory mode weak driving
-              average_exponent=11, duration = 6e-6, npts = 50, #duration/npts = integer
-              amp_start = 0, amp_stop = 0.4, amp_npts = 11,
-              kappa = 0.008e6, chi = 0.1e6,
+my_run.Ramsey_amp_sweep(is_echo = False, detuning = 0.5e6, cavity_freq_detuning=-10e6, # memory mode weak driving
+              average_exponent=11, duration = 10e-6, npts = 50, #duration/npts = integer
+              amp_start = 0, amp_stop = 0.5, amp_npts = 11,
+              kappa = 0.003e6, chi = 0.1e6,
               is_plot_figure=True,
               is_plot_simulation= False)
 
@@ -401,7 +429,7 @@ my_run.plot_error_amplification(is_drag_beta_calibration = True)
 # my_run.Rabi_amplitude(average_exponent=12, npts = 101, is_plot_simulation=True)
 
 # In[]
-my_run.Rabi_length(average_exponent=10, duration = 15e-6, npts = 500, is_single_shot = False, is_plot_simulation=False)
+my_run.Rabi_length(average_exponent=10, duration = 1e-6, npts = 100, is_single_shot = False, is_plot_simulation=False)
 my_run.plot_Rabi_length()
 
 # In[] cr_calibration_amp
@@ -427,7 +455,7 @@ my_run.plot_drag_calibration()
 
 # In[] cavity_T1 (crosskerr effect : it requires large photon number => it could have side-effect)
 
-my_run.cavity_T1(average_exponent=10, start = 0e-6, duration = 250e-6, npts = 51, is_plot_simulation=False)
+my_run.cavity_T1(average_exponent=10, start = 0e-6, duration = 350e-6, npts = 51, is_plot_simulation=False)
 my_run.plot_cavity_T1(init_guess = [1.5, 10, 20000, 0.8])
 
 # In[]
@@ -448,28 +476,28 @@ my_run.plot_qubit_state_revival()
 
 
 # In[]
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.9
-my_run.cavity_parameters['m0']["cond_disp_pulse_length"] = 400e-9
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.5
+my_run.cavity_parameters['m0']["cond_disp_pulse_length"] = 320e-9
 my_run.cavity_parameters['m0']['cond_disp_pulse_detuning'] = 0.5e6
 my_run.cavity_parameters['m0']['cond_disp_pulse_sigma'] = 2
 
-my_run.cavity_pi_nopi(average_exponent=10, freq_start = -0.1e6, freq_stop = 0.2e6, 
-                      freq_npts = 91, 
+my_run.cavity_pi_nopi(average_exponent=9, freq_start = 2.5e6, freq_stop = 3.8e6, 
+                      freq_npts = 101, 
                       is_qubit2 = False, 
                       qubit2 = 1,
-                      auto_chunking=False,
-                      is_plot_simulation=False)
+                      auto_chunking=True,
+                      is_plot_simulation=True)
 # not accurate for finding chi with cavity_pi_nopi experiment
 
 my_run.plot_cavity_pi_nopi()
 
 
 # In[]
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.9 # sweep variable
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.7 # sweep variable
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.188
 
 my_run.CNOD_calibration(average_exponent=10, amp_range=1j, npts= 61, qubit_phase = 0, is_displaced_state= True, is_plot_simulation=False)
-my_run.plot_CNOD_calibration(scaling_factor=0.33)
+my_run.plot_CNOD_calibration(scaling_factor=0.1657)
 
 # In[]
 
@@ -483,7 +511,7 @@ my_run.plot_CNOD_calibration(scaling_factor=0.33)
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.5 # sweep variable
 my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 1 # 이게 1이어야 함.. 코드 내부에서 amp 자리에 CNOD_alpha_1_amp가 들어가도록 되어 있음.
 # 이제까지 중복해서 곱해지는 현상 떄문에 원했던 amp보다 덜 들어가는 상황이었음.
-my_run.cavity_parameters['m0']['alpha_1_CNOD_amp'] = 0.33
+my_run.cavity_parameters['m0']['alpha_1_CNOD_amp'] = 0.3725
 
 my_run.disp_pulse_calibration_geophase(average_exponent=10, amp_sweep = 1, amp_npts=51, is_plot_simulation=False)
 my_run.plot_disp_pulse_calibration_geophase()
@@ -530,10 +558,10 @@ my_run.plot_storage_mode_characterization(is_fit=True,init_guess=[-2, 2.5, 10e-6
 
 # In[] with post selection (singleshot measure를 해야해서 measure point 수 한계가 있음)
 
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1065 # sweep variable
-my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.1065
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.1156 * 4
-my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.1156
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.176 # sweep variable
+my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.176
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.1657 * 4
+my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.1657
 
 # 'cavity_drive_amp' * amplitude에 해당하는 displaced state 형성
 # 'cavity_drive_amp'/(2*'alpha_1_cavity_drive_amp') 사이즈에 해당하는 Re-Im plane plot in case of wigner
@@ -554,23 +582,24 @@ my_run.plot_wigner_characteristic_function_measurement_2D(vmax = 0.68, vmin = -1
 
 # In[] without post selection
 
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1065 # sweep variable
-my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.1065
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.1156 * 4
-my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.1156
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.176 # sweep variable
+my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.176
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.1657 * 4
+my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.1657
 
 # 'cavity_drive_amp' * amplitude에 해당하는 displaced state 형성
 # 'cavity_drive_amp'/(2*'alpha_1_cavity_drive_amp') 사이즈에 해당하는 Re-Im plane plot in case of wigner
 
-my_run._wigner_characteristic_function_2D(average_exponent=10, npts_x = 11, npts_y = 21, amplitude = 1, #amplitude for coherent state
+my_run._wigner_characteristic_function_2D(average_exponent=8, npts_x = 11, npts_y = 11, amplitude = 1, #amplitude for coherent state
                           wait_length=480e-9,
                           is_wigner_function=False,
                           is_coherent_state = True, is_schrodinger_cat_state= False, 
                           is_schrodinger_cat_state_2=False,
                           is_cat_state=False,
                           alpha=0.25, beta= 0.1,
+                          is_autochunking=False,
                           is_plot_simulation=True)
-my_run._plot_wigner_characteristic_function_measurement_2D(vmax = 0.68, vmin = -1.34)
+my_run._plot_wigner_characteristic_function_measurement_2D(vmax = -0.4, vmin = 1.1)
 
 
 # In[]

@@ -1327,7 +1327,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                        capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
         ax[0].set_xlabel("Drive amplitude", fontsize=20)
         ax[0].set_ylabel("Frequency detuning (MHz)", fontsize=20)
-        ax[0].set_title(f"Center from {cavity_freq_detuning*1e-6}MHz away", fontsize=20)
+        ax[0].set_title(f"{cavity_freq_detuning*1e-6}MHz away from center", fontsize=20)
         ax[0].plot(amp_values, fit_func(amp_values, *popt_fit), 'b--', label='Fit')
         ax[0].legend()
 
