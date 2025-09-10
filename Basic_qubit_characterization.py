@@ -407,8 +407,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
             print(f"nopi : {popt1}")
             print(f"pi : {popt2}")
-            print(f"Thermal population : {min(popt1[0]/popt1[3], popt1[3]/popt1[0])}")
-            print(f"residual population : {min(popt2[0]/popt2[3], popt2[3]/popt2[0])}")
+            print(f"Thermal population : {min(popt1[0]/(popt1[3]+popt1[0]), popt1[3]/(popt1[0]+popt1[3]))}")
+            print(f"residual population : {min(popt2[0]/(popt2[3]+popt2[0]), popt2[3]/(popt2[0]+popt2[3]))}")
 
             plt.legend()
 
@@ -771,7 +771,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         if is_plot_simulation:
             self.simulation_plot(compiled_experiment_pi2_cal, start_time=0, length=20e-6, component=component)
-    
+            show_pulse_sheet("pi2_cal", compiled_experiment_pi2_cal)
+
     def plot_Pi2_cal(self):
 
         qubits_parameters = self.qubits_parameters
@@ -929,7 +930,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         qubits_parameters = self.qubits_parameters
         component = list(qubits_parameters.keys())[self.which_qubit]
-
         ### data processing ###############################################################
 
         averaged_nums = len(self.pi_cal_results.acquired_results['ac_pi_cal'].axis[0])
@@ -1112,7 +1112,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             exp_ramsey.set_signal_map(signal_map_1)
 
             signal_map_2 = {
-                "control_drive": device_setup.logical_signal_groups[control_component].logical_signals["drive_line"],
+                "control_drive": device_setup.logical_signal_groups[control_component].logical_signals["drive"],
             }
             exp_ramsey.set_signal_map(signal_map_2)
 
@@ -1131,8 +1131,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
 
     def Ramsey_with_photon(self, detuning = 0, is_echo = False,
-               average_exponent = 12, duration = 100e-6, npts = 101,
+               average_exponent = 12, duration = 100e-6, npts = 100,
                cavity_freq_detuning = 10e6,
+               steady_time = 100e-6,
                is_plot_simulation = False):
 
         device_setup = self.device_setup
@@ -1158,15 +1159,15 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         )
         
         if is_echo:
-            length = qubits_parameters[qubits_component]["pi_length"] + qubits_parameters[qubits_component]["pi2_length"]*2
+            qubit_drive_length = qubits_parameters[qubits_component]["pi_length"] + qubits_parameters[qubits_component]["pi2_length"]*2
         else :
-            length = qubits_parameters[qubits_component]["pi2_length"]*2
+            qubit_drive_length = qubits_parameters[qubits_component]["pi2_length"]*2
         
         self.is_echo = is_echo
 
         cavity_drive_constant_chunk_2 = pulse_library.const(
             uid="cavity_drive_pulse_2",
-            length=length,
+            length=qubit_drive_length,
             amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
         )
 
@@ -1214,7 +1215,10 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ):
                 with exp_ramsey_with_photon.section(uid="drive_section", alignment=SectionAlignment.RIGHT):
                     with exp_ramsey_with_photon.section(uid="cavity_drive_1"):
-                        exp_ramsey_with_photon.play(signal = "cavity_drive", pulse = cavity_drive_constant_chunk_2) # pulse length for pi/2
+                        @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
+                        def play_cavity_drive():
+                            exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant_chunk)
+                        # exp_ramsey_with_photon.play(signal = "cavity_drive", pulse = cavity_drive_constant_chunk_2) # pulse length for pi/2
 
                     with exp_ramsey_with_photon.section(uid="cavity_drive_2", play_after="cavity_drive_1"):
                         @repeat(cavity_drive_length_sweep, exp_ramsey_with_photon)
@@ -1226,6 +1230,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                     with exp_ramsey_with_photon.section(
                         uid="qubit_excitation", alignment=SectionAlignment.RIGHT
                     ):  
+                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length)
+
                         if is_echo:
                             exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
                             exp_ramsey_with_photon.delay(signal="drive", time=time_sweep/2)
@@ -1291,6 +1297,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                average_exponent = 12, duration = 100e-6, npts = 101,
                cavity_freq_detuning = 10e6, amp_start = 0, amp_stop = 0.1, amp_npts = 11,
                kappa = 1e6, chi = 1e6,
+               steady_time = 100e-6,
                is_plot_figure = False,
                is_plot_simulation = False):
 
@@ -1309,6 +1316,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
                                     duration=duration, npts=npts, detuning=detuning,
                                     cavity_freq_detuning=cavity_freq_detuning,
+                                    steady_time = 5e-6,
                                     is_plot_simulation=is_plot_simulation)
             popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure)
             
@@ -1341,9 +1349,10 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         A = popt_fit[0]
 
-        Delta = cavity_freq_detuning
-
-        a = np.sqrt( (A * (kappa**2 + chi**2)*(Delta**2+kappa**2/4))/(chi*kappa**2)  )
+        Delta = cavity_freq_detuning*1e-6
+        chi = chi/2 # chi = chi_ge/2
+        # a = np.sqrt( (A * (kappa**2 + chi**2)*(Delta**2+kappa**2/4))/(chi*kappa**2)  )
+        a = np.sqrt((A*2*np.pi*(kappa**2/4 + Delta**2)*(Delta**2 + (kappa**2)/4 + chi**2)) / (2*chi*(kappa**2/4-chi**2+Delta**2)))
 
         an2 = ax[0].annotate(r"$\frac{\epsilon}{2\pi} = aV$"+'\n'\
                              + f"a={a:.4f} MHz/V",
@@ -1390,14 +1399,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             std_data = np.imag(np.std(self.T2_data, axis = 0)/np.sqrt(averaged_nums))
 
         ### data plot ######################################################################
-        if is_plot :
-
-            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-
-            ax.errorbar(time*1e6, data, yerr = std_data, fmt = '--or', capsize = 5, markersize = 3, 
-                        ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
-
-            if is_fit :
+        if is_fit :
                 sfit1 = sFit('ExpCos', time, data)
                 
                 popt = sfit1._curve_fit()[0]
@@ -1406,35 +1408,89 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 _,freq,decay_rate,_,_ = popt
                 _,freq_err,decay_rate_err,_,_ = np.sqrt(np.diag(pcov))
 
+        if is_plot :
+
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+            ax.errorbar(time*1e6, data, yerr = std_data, fmt = '--or', capsize = 5, markersize = 3, 
+                        ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+
                 # Var(1/X) = Var(X)/X^4 => std(1/X) = std(X)/X^2
 
-                ax.plot(time*1e6, sfit1.func(time, *popt))
-                an = ax.annotate((f'T2 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us], freq = {(freq*1e-6):.3f}±{(freq_err*1e-6):.3f}[MHz]'), 
-                                    xy = (np.average(time), np.average(data)+(np.max(data)-np.min(data))*0.3),
-                                    size = 16)
-                an.draggable()
-                ax.tick_params(axis='both', which='major', labelsize=16)
+            ax.plot(time*1e6, sfit1.func(time, *popt))
+            an = ax.annotate((f'T2 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us], freq = {(freq*1e-6):.3f}±{(freq_err*1e-6):.3f}[MHz]'), 
+                                xy = (np.average(time), np.average(data)+(np.max(data)-np.min(data))*0.3),
+                                size = 16)
+            an.draggable()
+            ax.tick_params(axis='both', which='major', labelsize=16)
 
-                if not is_ramsey_with_photon:
-                    if self.is_echo:
-                        if self.qubit_phase == 0:
-                            ax.set_title(f"Ramsey measurement with CP : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
-                        else:
-                            ax.set_title(f"Ramsey measurement with CPMG : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
-
+            if not is_ramsey_with_photon:
+                if self.is_echo:
+                    if self.qubit_phase == 0:
+                        ax.set_title(f"Ramsey measurement with CP : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
                     else:
-                        ax.set_title("Ramsey measurement", fontsize=20)
-                else :
-                    if self.is_echo:
-                        ax.set_title(f"Echo Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
-                    else:
-                        ax.set_title(f"Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+                        ax.set_title(f"Ramsey measurement with CPMG : n_pi_pulse = {self.n_pi_pulse}", fontsize=20)
 
-                ax.set_xlabel("Time (us)", fontsize=20)
-                ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
-        
-        return popt, np.sqrt(np.diag(pcov))
+                else:
+                    ax.set_title("Ramsey measurement", fontsize=20)
+            else :
+                if self.is_echo:
+                    ax.set_title(f"Echo Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+                else:
+                    ax.set_title(f"Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+
+            ax.set_xlabel("Time (us)", fontsize=20)
+            ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
+
+            return popt, np.sqrt(np.diag(pcov))
+
+        else:
+            return popt, np.sqrt(np.diag(pcov))
     
+    def long_time_Ramsey(self, time_end, time_gap, average_exponent, detuning, duration, npts):
+        
+        # units of time_end, time_gap is minute
+
+        times_list = np.arange(0, time_end, time_gap)
+
+        freq_detuning_list = []
+        freq_err_list = []
+        decay_rate_list = []
+        decay_rate_err_list = []
+
+        for times in times_list:
+            
+            self.Ramsey(is_echo = False, n_pi_pulse=1, # for CP or CPMG
+                        qubit_phase = 0, # 0 CP, pi/2 CPMG
+                        detuning = detuning, 
+                        average_exponent=average_exponent, duration = duration, npts = npts,
+                        is_zz_interaction= False,
+                        control_qubit= 2,
+                        is_plot_simulation= False)
+
+            popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=False, is_fit=True, is_plot=False)
+            
+            freq_detuning_list.append((popt[1]-detuning)*1e-6) # [MHz]
+            freq_err_list.append(popt_err[1]*1e-6) # [MHz]
+            decay_rate_list.append(popt[2]*1e-6) # [MHz]
+            decay_rate_err_list.append(popt_err[2]*1e-6) # [MHz]
+
+            time_module.sleep(time_gap*60)
+        
+        fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+
+        ax[0].errorbar(times_list, freq_detuning_list, yerr=freq_err_list, fmt='o')
+        ax[0].set_ylabel("Frequency Detuning (MHz)")
+        ax[0].set_title("Long Time Ramsey - Frequency Detuning")
+
+        ax[1].errorbar(times_list, decay_rate_list, yerr=decay_rate_err_list, fmt='o')
+        ax[1].set_ylabel("Decay Rate (MHz)")
+        ax[1].set_title("Long Time Ramsey - Decay Rate")
+
+        plt.xlabel("Time (minutes)")
+        plt.tight_layout()
+        plt.show()
+
 # In[] Rabi
     def Rabi_amplitude(self, average_exponent = 12, npts = 100, is_plot_simulation = False):
         
@@ -1524,7 +1580,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             
 
 # In[]
-    def Rabi_length(self, average_exponent = 12, duration = 100e-6, npts = 100, is_single_shot = True, is_plot_simulation = False):
+    def Rabi_length(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6, # start_time is for preventing very short pulse duration/npts.
+                    npts = 100, is_single_shot = True, is_plot_simulation = False):
         
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters 
@@ -1533,6 +1590,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         self.exp_Rabi_length_dict = {
             "duration": duration,
             "npts": npts,
+            "start_time": start_time,
         }
         
         ## define pulses used for experiment
@@ -1548,10 +1606,19 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             amplitude=qubits_parameters[component]["readout_integration_amp"], 
         )
         
-        rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
-                                             length = duration/npts, 
-                                             amplitude = qubits_parameters[component]["rabi_drive_amp"])
         
+        if duration > 2e-6 :
+
+            rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
+                                                length = duration/npts, 
+                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
+        
+        else :
+
+            rabi_drive = pulse_library.const(uid="drive_pulse", 
+                                                length = duration, 
+                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
+
         ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
                                         length=qubits_parameters[component]["ramp_length"], 
                                         amplitude=qubits_parameters[component]["rabi_drive_amp"])
@@ -1607,10 +1674,16 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             
             with exp_rabi_length.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 with exp_rabi_length.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
-                    @repeat(rabi_length_sweep, exp_rabi_length)
-                    def play_rabi():
-                        exp_rabi_length.play(signal = "drive", 
-                                            pulse = rabi_drive_chunk)
+
+                    if duration > 2e-6 :
+
+                        @repeat(rabi_length_sweep, exp_rabi_length)
+                        def play_rabi():
+                            exp_rabi_length.play(signal = "drive", 
+                                                pulse = rabi_drive_chunk)
+                    
+                    else :
+                        exp_rabi_length.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
                                              
                 # readout pulse and data acquisition
                 with exp_rabi_length.section(uid="readout_section", play_after="rabi_drives"):
@@ -1636,7 +1709,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         if is_plot_simulation:
             self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
-            
+            show_pulse_sheet("rabi", compiled_experiment_rabi)
+
     def plot_Rabi_length(self, is_fit = True):
         
         if self.is_single_shot:
@@ -1648,7 +1722,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             self.rabi_length_data = self.rabi_length_results.get_data("rabi_length") # (2^N, npts) array
             # time = self.rabi_length_results.acquired_results['rabi_length'].axis[1]
 
-            time = np.linspace(0, self.exp_Rabi_length_dict["duration"], self.exp_Rabi_length_dict["npts"])
+            time = np.linspace(self.exp_Rabi_length_dict["start_time"], 
+                               self.exp_Rabi_length_dict["start_time"]+self.exp_Rabi_length_dict["duration"], 
+                               self.exp_Rabi_length_dict["npts"])
 
             averaged_data = np.mean(self.rabi_length_data, axis = 0)
 
@@ -1674,7 +1750,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             else:
                 data = np.imag(self.rabi_length_data)
 
-            time = np.linspace(0, self.exp_Rabi_length_dict["duration"], self.exp_Rabi_length_dict["npts"])
+            time = np.linspace(self.exp_Rabi_length_dict["start_time"], 
+                               self.exp_Rabi_length_dict["start_time"]+self.exp_Rabi_length_dict["duration"], 
+                               self.exp_Rabi_length_dict["npts"])
 
         ### data plot ######################################################################
 
@@ -1695,7 +1773,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
             ax.plot(time*1e6, sfit1.func(time, *popt))
             an = ax.annotate((f'decay time = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us], freq = {(freq*1e-6):.3f}±{(freq_err*1e-6):.3f}[MHz]'), 
-                                xy = (np.average(time), np.average(data)+(np.max(data)-np.min(data))*0.3),
+                                xy = (np.average(time*1e6), np.average(data)+(np.max(data)-np.min(data))*0.3),
                                 size = 16)
             an.draggable()
             ax.tick_params(axis='both', which='major', labelsize=16)

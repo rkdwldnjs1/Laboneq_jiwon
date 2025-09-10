@@ -825,7 +825,7 @@ class ZI_QCCS(object):
                 length=cavity_parameters[cavity_component]["sideband_length"],
                 frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
                 frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
-                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"],
+                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*cavity_parameters[cavity_component]["sideband_att_h"]/cavity_parameters[cavity_component]["sideband_att_l"],
                 amp_h=cavity_parameters[cavity_component]["sideband_amp_h"],
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
             )
