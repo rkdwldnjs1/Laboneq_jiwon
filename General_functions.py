@@ -847,6 +847,27 @@ class ZI_QCCS(object):
         else:
             raise ValueError("Invalid pulse type. Choose from 'readout', 'qubit_control', or 'cavity_control'.")
         
+# In[]
+
+    def data_to_p_e(self, data):
+        """Normalize the data to the range [g, e]."""
+
+        e_state = self.pi_value
+        g_state = self.nopi_value
+
+        data_to_p_e = (data - g_state) / (e_state - g_state)
+
+        return data_to_p_e, e_state, g_state
+
+    def data_to_sigma_z(self, data):
+        """Normalize the data to the range [-1, 1]."""
+
+        e_state = self.pi_value
+        g_state = self.nopi_value
+
+        data_to_sigma_z = 1 - 2 * (data - g_state) / (e_state - g_state)
+
+        return data_to_sigma_z, e_state, g_state
 
 ################### Time Domain Measurements #################################################################################################
 

@@ -1711,6 +1711,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
             show_pulse_sheet("rabi", compiled_experiment_rabi)
 
+
     def plot_Rabi_length(self, is_fit = True):
         
         if self.is_single_shot:
@@ -1780,6 +1781,215 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ax.set_title("Rabi_length measurement", fontsize=20)
             ax.set_xlabel("Time (us)", fontsize=20)
             ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
+
+
+    def Rabi_length_spin_locking(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6,
+                    npts = 100, rabi_phase = 0, is_init_pi2 = True, is_plot_simulation = False):
+        
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        
+        self.exp_Rabi_length_spin_locking_dict = {
+            "duration": duration,
+            "npts": npts,
+            "rabi_phase": rabi_phase,
+            "start_time": start_time,
+        }
+        
+        ## define pulses used for experiment
+        readout_pulse = pulse_library.gaussian_square(
+            uid="readout_pulse", 
+            length=qubits_parameters[component]["readout_pulse_length"], 
+            amplitude=qubits_parameters[component]["readout_amp"], 
+        )
+        # readout integration weights - here simple square pulse, i.e. same weights at all times
+        readout_weighting_function = pulse_library.gaussian_square(
+            uid="readout_weighting_function", 
+            length=qubits_parameters[component]["readout_integration_length"],
+            amplitude=qubits_parameters[component]["readout_integration_amp"], 
+        )
+        
+        pi2_pulse, _, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        component, cavity_component)
+        
+
+        if duration > 2e-6 :
+
+            rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
+                                                length = duration/npts, 
+                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
+        
+        else :
+
+            rabi_drive = pulse_library.const(uid="drive_pulse", 
+                                                length = duration, 
+                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
+        
+
+        ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
+                                        length=qubits_parameters[component]["ramp_length"], 
+                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
+        ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
+                                        length=qubits_parameters[component]["ramp_length"], 
+                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
+        
+        rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
+
+        
+        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(count, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=count):
+                        for v in count.values:
+                            with exp.case(v):
+                                if v == 0:
+                                    exp.play(signal="drive", pulse=ramp_up)
+                                    exp.play(signal="drive", pulse=ramp_down)
+                                else:
+                                    exp.play(signal="drive", pulse=ramp_up)
+                                    for _ in range(int(v)):
+                                        f()
+                                    exp.play(signal="drive", pulse=ramp_down)
+                else:
+                    for _ in range(count):
+                        f()
+
+            return decorator
+        
+        def _xyz(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(sweep_case, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=sweep_case):
+                        for v in sweep_case.values:
+                            with exp.case(v):
+                                f(v)
+    
+            return decorator
+
+        xyz_sweep_case=LinearSweepParameter(uid="xyz", start=0, stop=2, count=3)
+        
+        exp_rabi_length_spin_locking = Experiment(
+            uid="Rabi_length",
+            signals=[
+                ExperimentSignal("drive"),
+                ExperimentSignal("measure"),
+                ExperimentSignal("acquire"),
+            ],
+        )
+
+        with exp_rabi_length_spin_locking.acquire_loop_rt(
+            uid="shots",
+            count=pow(2, average_exponent),
+            averaging_mode=AveragingMode.CYCLIC,
+            acquisition_type=AcquisitionType.INTEGRATION,
+        ):
+            
+            with exp_rabi_length_spin_locking.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
+                with exp_rabi_length_spin_locking.sweep(uid="xyz_sweep", parameter=xyz_sweep_case):
+                    with exp_rabi_length_spin_locking.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
+                        
+                        if is_init_pi2:
+                            with exp_rabi_length_spin_locking.section(uid="qubit_drive", alignment=SectionAlignment.RIGHT):
+                                exp_rabi_length_spin_locking.play(signal = "drive", pulse = pi2_pulse)
+
+                        if duration > 2e-6 :
+
+                            @repeat(rabi_length_sweep, exp_rabi_length_spin_locking)
+                            def play_rabi():
+                                exp_rabi_length_spin_locking.play(signal = "drive", 
+                                                    pulse = rabi_drive_chunk,
+                                                    phase = rabi_phase*np.pi/180)
+                        
+                        else :
+                            with exp_rabi_length_spin_locking.section(uid="qubit_rabi_drive"):
+                                exp_rabi_length_spin_locking.play(signal = "drive", pulse = rabi_drive, 
+                                                                length = start_time+rabi_length_sweep*(duration/npts),
+                                                                phase = rabi_phase*np.pi/180)
+                     
+                    
+                    with exp_rabi_length_spin_locking.section(uid="xyz", play_after="rabi_drives"):
+                        @_xyz(xyz_sweep_case, exp=exp_rabi_length_spin_locking)
+                        def play_drive(v):
+                            if v == 0: # X
+                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = 0)
+                            elif v == 1: # Y
+                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = np.pi/2)
+                            elif v == 2: # Z
+                                pass
+
+                    # readout pulse and data acquisition
+                    with exp_rabi_length_spin_locking.section(uid="readout_section", play_after="xyz"):
+                        # play readout pulse on measure line
+                        exp_rabi_length_spin_locking.play(signal="measure", pulse=readout_pulse, phase = qubits_parameters[component]["readout_phase"])
+                        # trigger signal data acquisition
+                        exp_rabi_length_spin_locking.acquire(
+                            signal="acquire",
+                            handle="rabi_length_spin_locking",
+                            kernel=readout_weighting_function,
+                        )
+                    # relax time after readout - for qubit relaxation to groundstate and signal processing
+                    with exp_rabi_length_spin_locking.section(uid="reserve", length=qubits_parameters[component]["reset_delay_length"]):
+                        exp_rabi_length_spin_locking.reserve(signal="measure")
+    
+        signal_map = self.signal_map(component)
+        
+        exp_rabi_length_spin_locking.set_signal_map(signal_map)
+        
+        compiled_experiment_rabi = self.session.compile(exp_rabi_length_spin_locking)
+        
+        self.rabi_length_spin_locking_results = self.session.run(compiled_experiment_rabi)
+        
+        if is_plot_simulation:
+            self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
+            show_pulse_sheet("rabi_spin_locking", compiled_experiment_rabi)
+
+
+    def plot_Rabi_length_spin_locking(self, is_normalize = True):
+        
+    ### data processing ###############################################################
+        self.rabi_length_spin_locking_data = self.rabi_length_spin_locking_results.get_data("rabi_length_spin_locking")
+
+        if self.which_data == "I":
+            data = np.real(self.rabi_length_spin_locking_data)
+        else:
+            data = np.imag(self.rabi_length_spin_locking_data)
+        
+        rabi_length_sweep_list = self.rabi_length_spin_locking_results.acquired_results['rabi_length_spin_locking'].axis[0]
+
+        if self.exp_Rabi_length_spin_locking_dict["duration"] > 2e-6:
+            time = rabi_length_sweep_list * self.exp_Rabi_length_spin_locking_dict["duration"]/self.exp_Rabi_length_spin_locking_dict["npts"]
+        else:
+            time = np.linspace(self.exp_Rabi_length_spin_locking_dict["start_time"], 
+                               self.exp_Rabi_length_spin_locking_dict["start_time"]+self.exp_Rabi_length_spin_locking_dict["duration"], 
+                               self.exp_Rabi_length_spin_locking_dict["npts"])
+
+        if is_normalize:
+            data, e_state, g_state = self.data_to_sigma_z(data)
+    ### data plot ######################################################################
+
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+        ax.plot(time*1e6, data[:,0], color="r", marker="o", linestyle = '--', markeredgecolor='black', label = 'X')
+        ax.plot(time*1e6, data[:,1], color="g", marker="o", linestyle = '--', markeredgecolor='black', label = 'Y')
+        ax.plot(time*1e6, data[:,2], color="b", marker="o", linestyle = '--', markeredgecolor='black', label = 'Z')
+        ax.set_title("Rabi_length_spin_locking measurement", fontsize=20)
+        ax.set_xlabel("Time (us)", fontsize=20)
+
+        if is_normalize:
+            ax.axhline(1, color='green', linestyle='--', label='Ground State')
+            ax.axhline(-1, color='purple', linestyle='--', label='Excited State')
+            ax.set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
+        
+        ax.legend()
+
+        an = ax.annotate(f"rabi phase : {self.exp_Rabi_length_spin_locking_dict['rabi_phase']}",
+                             xy = (np.average(time), np.average(data[:,0])),
+                             size = 16)
+        an.draggable()
 
 # In[] All XY
 

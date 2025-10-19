@@ -2619,6 +2619,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
     def calibrate_sideband_pulse_phase(self, average_exponent=12, sidebands_pulse_length=100e-6, rabi_pulse_length=10e-6,
                                        npts_phase_sweep=21,
                                        is_sideband_phase_sweep = True, # else rabi phase sweep
+                                       phase_sweep_stop = 2*np.pi,
                                        auto_chunking = False,
                                        is_init_qubit_pi2=False,
                                        is_plot_simulation = False):
@@ -2647,7 +2648,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                                                                    qubits_component, cavity_component)
         
         rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
-                                                length = 1e-6, 
+                                                length = 200e-9, 
                                                 amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -2679,7 +2680,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         xyz_sweep_case=LinearSweepParameter(uid="xyz", start=0, stop=2, count=3)
 
-        phase_sweep = LinearSweepParameter(uid="phase_sweep", start=0, stop=2*np.pi, count=npts_phase_sweep)
+        phase_sweep = LinearSweepParameter(uid="phase_sweep", start=0, stop=phase_sweep_stop, count=npts_phase_sweep)
 
         # Define the experiment
         exp_sideband_pulse_phase = Experiment(
@@ -2700,7 +2701,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             reset_oscillator_phase=True,
         ):
             with exp_sideband_pulse_phase.sweep(uid="xyz_sweep", parameter=xyz_sweep_case):
-                with exp_sideband_pulse_phase.sweep(uid="amplitude_sweep", parameter=phase_sweep, 
+                with exp_sideband_pulse_phase.sweep(uid="phase_sweep", parameter=phase_sweep, 
                                                     auto_chunking = auto_chunking, reset_oscillator_phase=True):
                     
                     with exp_sideband_pulse_phase.section(uid="drives", alignment = SectionAlignment.RIGHT):
@@ -2720,7 +2721,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                             else:
                                 pass
                             
-                            @repeat(int(rabi_pulse_length/1e-6), exp_sideband_pulse_phase)
+                            @repeat(int(rabi_pulse_length/200e-9), exp_sideband_pulse_phase)
                             def play_qubit_rabi_drive():
                                 if not is_sideband_phase_sweep:
                                     exp_sideband_pulse_phase.play(signal = "drive", pulse = rabi_drive_chunk, phase = phase_sweep) # I am not sure it is ok
@@ -2760,7 +2761,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.simulation_plot(compiled_exp_sideband_pulse_phase, start_time=0, length=20e-6)
             show_pulse_sheet("exp_sideband_pulse_phase", compiled_exp_sideband_pulse_phase)
 
-    def plot_calibrate_sideband_pulse_phase(self):
+    def plot_calibrate_sideband_pulse_phase(self, is_normalize=False):
 
         self.exp_sideband_pulse_phase_data = self.exp_sideband_pulse_phase_results.get_data("sideband_pulse_phase_cal")
 
@@ -2770,6 +2771,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             data = np.imag(self.exp_sideband_pulse_phase_data)
 
         phase_sweep_list = self.exp_sideband_pulse_phase_results.acquired_results['sideband_pulse_phase_cal'].axis[1]
+
+        if is_normalize:
+            data, e_state, g_state = self.data_to_sigma_z(data)
 
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
@@ -2789,6 +2793,11 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax[0].plot(phase_sweep_list, data[0], marker='o', linestyle=':', color='k', label='<X>')
         ax[0].plot(phase_sweep_list, data[1], marker='o', linestyle=':', color='r', label='<Y>')
         ax[0].plot(phase_sweep_list, data[2], marker='o', linestyle=':', color='b', label='<Z>')
+        # Add guidelines for ground and excited state values
+        if is_normalize:
+            ax[0].axhline(1, color='green', linestyle='--', label='Ground State')
+            ax[0].axhline(-1, color='purple', linestyle='--', label='Excited State')
+            ax[0].set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
 
         ax[1].plot(phase_sweep_list, np.sqrt(data[0]**2+data[1]**2+data[2]**2), marker='o', linestyle=':', color='k', label='Purity')
 
