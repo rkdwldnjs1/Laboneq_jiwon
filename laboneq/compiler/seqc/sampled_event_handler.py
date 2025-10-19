@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from functools import cmp_to_key
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Literal
 
 from laboneq.core.types.enums import AcquisitionType
 from laboneq.core.types.enums.acquisition_type import (
@@ -14,8 +14,6 @@ from laboneq.core.types.enums.acquisition_type import (
 from laboneq._utils import flatten
 from laboneq.compiler.common.feedback_connection import FeedbackConnection
 from laboneq.compiler.common.feedback_register_config import FeedbackRegisterConfig
-from laboneq.compiler.common.resource_usage import ResourceUsage
-from laboneq.compiler.common.signal_obj import SignalObj
 from laboneq.compiler.feedback_router.feedback_router import (
     FeedbackRegisterLayout,
     GlobalFeedbackRegister,
@@ -45,7 +43,11 @@ if TYPE_CHECKING:
     from laboneq.compiler.seqc.command_table_tracker import (
         CommandTableTracker,
     )
-    from laboneq._rust.codegenerator import WaveIndexTracker, SeqCTracker
+    from laboneq._rust.codegenerator import (
+        WaveIndexTracker,
+        SeqCTracker,
+        AwgKey as AwgKeyRs,
+    )
     from laboneq.compiler.common.awg_info import AWGInfo, AWGSignalType
 
 _logger = logging.getLogger(__name__)
@@ -140,8 +142,8 @@ class SampledEventHandler:
         function_defs_generator: SeqCGenerator,
         declarations_generator: SeqCGenerator,
         wave_indices: WaveIndexTracker,
-        qa_signal_by_handle: dict[str, SignalObj],
-        feedback_register: int | None,
+        qa_signal_by_handle: dict[str, tuple[str, AwgKeyRs]],
+        feedback_register: int | Literal["local"] | None,
         feedback_connections: dict[str, FeedbackConnection],
         feedback_register_layout: FeedbackRegisterLayout,
         feedback_register_config: FeedbackRegisterConfig,
@@ -431,8 +433,8 @@ class SampledEventHandler:
         if hw_oscillator is not None:
             parts.append(f"osc={hw_oscillator.osc_index}|{hw_oscillator.osc_id}")
 
-        if signature.set_phase is not None:
-            parts.append(f"phase={signature.set_phase:.2g}")
+        if signature.reset_phase:
+            parts.append("phase=0.0")
         elif signature.increment_phase is not None:
             parts.append(f"phase+={signature.increment_phase:.2g}")
 
@@ -523,9 +525,9 @@ class SampledEventHandler:
         generator_channels = set()
         play_event: AWGEvent
         for play_event in sampled_event.params["play_events"]:
-            waveform_signature = play_event.signature.waveform
+            waveform_signature = play_event.waveform
             # TODO: Could we somehow add channels to events immediately?
-            signal_ids = play_event.params.get("signal_ids")
+            signal_ids = play_event.signals
             if signal_ids and waveform_signature:
                 [signal_id] = signal_ids
                 current_signal_obj = next(
@@ -541,12 +543,8 @@ class SampledEventHandler:
                 )
 
         integration_channels = list(
-            flatten(
-                event.params["channels"]
-                for event in sampled_event.params["acquire_events"]
-            )
+            flatten(event.channels for event in sampled_event.params["acquire_events"])
         )
-
         if len(integration_channels) > 0:
             integrator_mask: str = "|".join(
                 map(lambda x: "QA_INT_" + str(x), integration_channels)
@@ -586,7 +584,11 @@ class SampledEventHandler:
             )
         else:
             monitor = 1 if self.acquisition_type == AcquisitionType.RAW else 0
-            feedback_register = self.feedback_register or 0
+            feedback_register = (
+                0
+                if self.feedback_register in (None, "local")
+                else self.feedback_register
+            )
             self.seqc_tracker.add_startqa_shfqa_statement(
                 generator_mask,
                 integrator_mask,
@@ -634,9 +636,6 @@ class SampledEventHandler:
         )
 
     def handle_reset_phase(self, sampled_event: AWGEvent):
-        if not self.awg.device_type.supports_reset_osc_phase:
-            return
-
         # If multiple phase reset events are scheduled at the same time,
         # only process the *last* one. This way, RESET_PHASE takes
         # precedence over INITIAL_RESET_PHASE.
@@ -655,7 +654,7 @@ class SampledEventHandler:
             signature = PlaybackSignature(
                 waveform=None,
                 hw_oscillator=None,
-                set_phase=0.0,
+                reset_phase=True,
             )
 
             ct_index = self.command_table_tracker.get_or_create_entry(
@@ -727,7 +726,6 @@ class SampledEventHandler:
         osc_index: int = sampled_event.params["osc_index"]
         osc_id_symbol = f"freq_osc_{osc_index}"
         counter_variable_name = f"c_freq_osc_{osc_index}"
-
         if not self.declarations_generator.is_variable_declared(counter_variable_name):
             self.declarations_generator.add_variable_declaration(
                 counter_variable_name, 0
@@ -848,14 +846,6 @@ class SampledEventHandler:
         self.shfppc_sweeper_config_tracker.exit_loop()
 
     def handle_match(self, sampled_event: AWGEvent):
-        if (this_sample := sampled_event.params.get("prng_sample")) is not None:
-            other_sample = self.seqc_tracker.prng_tracker().active_sample
-            section = sampled_event.params["section_name"]
-            if this_sample != other_sample:
-                raise LabOneQException(
-                    f"In section '{section}: cannot match PRNG sample '{this_sample}' here. The only available PRNG sample is '{other_sample}'."
-                )
-
         if self.match_parent_event is not None:
             mpe_par = self.match_parent_event.params
             se_par = sampled_event.params
@@ -890,46 +880,18 @@ class SampledEventHandler:
 
         seed = sampled_event.params["seed"]
         prng_range = sampled_event.params["range"]
-        section = sampled_event.params["section"]
 
         assert seed is not None and prng_range is not None
-
-        if self.seqc_tracker.prng_tracker() is not None:
-            raise LabOneQException(
-                f"In section '{section}': Cannot seed PRNG, it is already allocated in this context"
-            )
-
         self.seqc_tracker.setup_prng(seed=seed, prng_range=prng_range)
-
-    def handle_drop_prng_setup(self, _sampled_event: AWGEvent):
-        if not self.device_type.has_prng:
-            return
-        self.seqc_tracker.drop_prng()
 
     def handle_sample_prng(self, sampled_event: AWGEvent):
         if not self.device_type.has_prng:
             return
-
-        prng_tracker = self.seqc_tracker.prng_tracker()
-        assert prng_tracker is not None
-        if prng_tracker.active_sample is not None:
-            section = sampled_event.params["section_name"]
-            this_sample = sampled_event.params["sample_name"]
-            other_sample = prng_tracker.active_sample
-            raise LabOneQException(
-                f"In section '{section}': Can't draw sample '{this_sample}' from PRNG,"
-                f" when other sample '{other_sample}' is still required at the same time"
-            )
-        prng_tracker.active_sample = sampled_event.params["sample_name"]
-
         self.seqc_tracker.sample_prng(self.declarations_generator)
 
     def handle_drop_prng_sample(self, sampled_event: AWGEvent):
         if not self.device_type.has_prng:
             return
-        prng_tracker = self.seqc_tracker.prng_tracker()
-        assert prng_tracker.active_sample == sampled_event.params["sample_name"]
-        prng_tracker.drop_sample()
         self.match_command_table_entries.clear()
 
     def handle_ppc_step_start(self, sampled_event: AWGEvent):
@@ -968,30 +930,26 @@ class SampledEventHandler:
         return register_bitshift, width, mask
 
     def add_feedback_config(self, handle: str, local: bool):
-        qa_signal = self.qa_signal_by_handle[handle]
-
+        qa_signal, qa_awg_key = self.qa_signal_by_handle[handle]
         self.feedback_connections.setdefault(
-            handle, FeedbackConnection(tx=qa_signal.awg.key)
+            handle, FeedbackConnection(tx=qa_awg_key)
         ).rx.add(self.awg.key)
 
         if local:
-            register = LocalFeedbackRegister(qa_signal.awg.device_id)
+            register = LocalFeedbackRegister(qa_awg_key.device_id)
             codeword_bitshift, width, mask = self._register_bitshift(
-                register, qa_signal=qa_signal.id, force_local_alignment=True
+                register, qa_signal=qa_signal, force_local_alignment=True
             )
             index_select = None
         else:
-            register = GlobalFeedbackRegister(qa_signal.awg.key)
+            register = GlobalFeedbackRegister(qa_awg_key)
             qa_register_bitshift, width, mask = self._register_bitshift(
-                register, qa_signal=qa_signal.id, force_local_alignment=False
+                register, qa_signal=qa_signal, force_local_alignment=False
             )
 
             # feedback through PQSC: assign index based on AWG number
             index_select = qa_register_bitshift // 2
             codeword_bitshift = 2 * self.awg.awg_id + qa_register_bitshift % 2
-
-        if local:
-            self.feedback_register_config.source_feedback_register = "local"
 
         if not local:
             path = "ZSYNC_DATA_PROCESSED_A"
@@ -1224,8 +1182,6 @@ class SampledEventHandler:
             self.handle_change_oscillator_phase(sampled_event)
         elif signature == AWGEventType.SETUP_PRNG:
             self.handle_setup_prng(sampled_event)
-        elif signature == AWGEventType.DROP_PRNG_SETUP:
-            self.handle_drop_prng_setup(sampled_event)
         elif signature == AWGEventType.PRNG_SAMPLE:
             self.handle_sample_prng(sampled_event)
         elif signature == AWGEventType.DROP_PRNG_SAMPLE:
@@ -1254,13 +1210,3 @@ class SampledEventHandler:
             _logger.debug("-End event list")
             self.handle_sampled_event_list()
         self.seqc_tracker.force_deferred_function_calls()
-
-    def resource_usage(self) -> list[ResourceUsage]:
-        if self.use_command_table:
-            return [
-                ResourceUsage(
-                    f"Command table of device '{self.awg.device_id}', AWG({self.awg.awg_id})",
-                    self.command_table_tracker.command_table_usage(),
-                ),
-            ]
-        return []

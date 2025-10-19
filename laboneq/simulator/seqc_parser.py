@@ -375,12 +375,17 @@ class CommandTableEntryInfo:
             incr = ct_entry["phase0"].get("increment", False)
             assert ct_entry["phase1"].get("increment", False) == incr
             phase = ct_entry["phase0"]["value"]
+
+            # for RF channels the phases should match, for IQ: 90 degree diff
+            assert (
+                abs(
+                    phase_diff := (phase - ct_entry["phase1"]["value"] + 180.0) % 360.0
+                    - 180.0
+                )
+            ) < 1e-6 or abs(phase_diff - 90.0) < 1e-6
+
             if not incr:
                 phase -= 90
-            assert (
-                abs((phase - ct_entry["phase1"]["value"] + 180.0) % 360.0 - 180.0)
-                < 1e-6
-            )
 
             if incr:
                 d["rel_phase"] = phase
@@ -1073,12 +1078,11 @@ def analyze_recipe(
         )
         awg_index = 0
         for awg in init.awgs:
-            assert isinstance(awg.awg, int)
             awg_nr = awg.awg
             rt_exec_step = next(
                 r
                 for r in recipe.realtime_execution_init
-                if r.device_id == device_uid and r.awg_id == awg_nr
+                if r.device_id == device_uid and r.awg_index == awg_nr
             )
             seqc = rt_exec_step.program_ref
             if device_type == "SHFSG" or device_type == "SHFQA":

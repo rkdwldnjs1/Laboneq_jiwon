@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import sys
+import logging
 from enum import Enum
+from functools import partial
 from typing import ClassVar, Type, Union
 
 import attrs
@@ -12,9 +14,6 @@ import numpy
 from cattrs import Converter
 
 from laboneq.core.types.enums.carrier_type import CarrierType
-from laboneq.core.types.enums.high_pass_compensation_clearing import (
-    HighPassCompensationClearing,
-)
 from laboneq.core.types.enums.modulation_type import ModulationType
 from laboneq.core.types.enums.port_mode import PortMode
 from laboneq.core.types.units import Quantity, Unit
@@ -67,14 +66,6 @@ class PortModeModel(Enum):
     _target_class = PortMode
 
 
-class HighPassCompensationClearingModel(Enum):
-    LEVEL = "LEVEL"
-    RISE = "RISE"
-    FALL = "FALL"
-    BOTH = "BOTH"
-    _target_class = HighPassCompensationClearing
-
-
 class UnitModel(Enum):
     volt = "volt"
     dBm = "dBm"
@@ -106,6 +97,19 @@ class LinearSweepParameterModel:
 
 
 ParameterModel = Union[SweepParameterModel, LinearSweepParameterModel]
+
+
+def _structure_list_parameter_model(
+    v: ParameterModel | list[ParameterModel], _, _converter: Converter
+):
+    if isinstance(v, list):
+        return [_converter.structure(item, ParameterModel) for item in v]
+    elif isinstance(v, ParameterModel):
+        return _converter.structure(v, ParameterModel)
+    else:
+        raise TypeError(
+            f"Expected ParameterModel or list of ParameterModel, got {type(v)}"
+        )
 
 
 def unstructure_basic_or_parameter_model(obj, _converter: Converter):
@@ -200,7 +204,6 @@ class ExponentialCompensationModel:
 @attrs.define
 class HighPassCompensationModel:
     timeconstant: float
-    clearing: HighPassCompensationClearingModel | None
     _target_class: ClassVar[Type] = HighPassCompensation
 
 
@@ -243,7 +246,33 @@ class CalibrationModel:
     _target_class: ClassVar[Type] = Calibration
 
 
+def remove_high_pass_clearing(
+    signal_id: str, calibration_info: dict, logger: logging.Logger
+):
+    """Remove HighPassCompensation.clearing from serialized calibration data."""
+    if calibration_info is None:
+        return
+    precompensation_info = calibration_info.get("precompensation")
+    if not precompensation_info:
+        return
+    high_pass_info = precompensation_info.get("high_pass")
+    if not high_pass_info:
+        return
+    clearing = high_pass_info.pop("clearing", None)
+    if clearing is not None:
+        logger.warning(
+            f"Dropping high-pass clearing={clearing!r} precompensation setting"
+            f" for signal {signal_id!r}. The high-pass clearing precompensation"
+            f" setting was removed in LabOne Q version 2.57.0 and had no effect"
+            f" since LabOne Q version 2.8.0."
+        )
+
+
 def make_converter():
     _converter = make_laboneq_converter()
+    _converter.register_structure_hook(
+        ParameterModel | list[ParameterModel],
+        partial(_structure_list_parameter_model, _converter=_converter),
+    )
     register_models(_converter, collect_models(sys.modules[__name__]))
     return _converter

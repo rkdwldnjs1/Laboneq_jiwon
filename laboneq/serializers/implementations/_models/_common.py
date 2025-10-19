@@ -1,22 +1,21 @@
 # Copyright 2025 Zurich Instruments AG
 # SPDX-License-Identifier: Apache-2.0
 
-from enum import Enum
 import inspect
-from collections.abc import Iterable
 import types
-from typing import Type
+import typing
+from collections.abc import Iterable
+from enum import Enum
+from typing import Type, TypeVar
 
 import attrs
 import numpy
-import typing
 from cattrs import Converter
 from cattrs.gen import make_dict_unstructure_fn
 from cattrs.preconf.orjson import make_converter
 
 from laboneq.serializers.core import from_dict
 from laboneq.serializers.implementations.numpy_array import NumpyArraySerializer
-from cattrs.strategies import use_class_methods
 
 # Common types
 
@@ -112,9 +111,10 @@ def structure(data: dict, cls: type, converter: Converter):
     attributes = attrs.fields_dict(cls)
     se = {}
     for k, v in data.items():
-        if k == "_type":
+        if k == "_type" or k == "$ref":
             # _type field was used to manually structure the union type.
             # It is no longer needed when we let cattrs structure the object automatically.
+            # ref field is used for caching and is already processed by the cache methods in ObjectCache.
             continue
         if k not in attributes:
             raise ValueError(f"Invalid attribute {k} for class {cls}")
@@ -124,6 +124,8 @@ def structure(data: dict, cls: type, converter: Converter):
         # cattrs issue: https://github.com/python-attrs/cattrs/issues/656
         # Specifically handle the case of when value is a float or int and
         # the type is float or Union with float.
+        # This cattrs issue was fixed and will be released in 25.2.
+        # This work-around could perhaps be removed after we migrating to 25.2
         if typing.get_origin(attributes[k].type) in (
             typing.Union,
             types.UnionType,
@@ -139,6 +141,10 @@ def structure(data: dict, cls: type, converter: Converter):
     return de
 
 
+def _predicate(cls):
+    return lambda obj: obj is cls
+
+
 def register_models(converter: Converter, models: Iterable) -> None:
     for model in models:
         if issubclass(model, Enum):
@@ -148,19 +154,49 @@ def register_models(converter: Converter, models: Iterable) -> None:
             )
             continue
         if "_unstructure" in model.__dict__:
-            use_class_methods(converter, unstructure_method_name="_unstructure")
+            if hasattr(model, "__cache_serializer__"):
+                converter.register_unstructure_hook_func(
+                    _predicate(model),
+                    model.__cache_serializer__.cache_unstructure(model._unstructure),
+                )
+            else:
+                converter.register_unstructure_hook_func(
+                    _predicate(model), model._unstructure
+                )
         else:
-            converter.register_unstructure_hook(
-                model, make_dict_unstructure_fn(model, converter)
-            )
+            if hasattr(model, "__cache_serializer__"):
+                converter.register_unstructure_hook(
+                    model,
+                    model.__cache_serializer__.cache_unstructure(
+                        make_dict_unstructure_fn(model, converter)
+                    ),
+                )
+            else:
+                converter.register_unstructure_hook(
+                    model, make_dict_unstructure_fn(model, converter)
+                )
 
         if "_structure" in model.__dict__:
-            use_class_methods(converter, structure_method_name="_structure")
+            if hasattr(model, "__cache_serializer__"):
+                converter.register_structure_hook_func(
+                    _predicate(model),
+                    model.__cache_serializer__.cache_structure(model._structure),
+                )
+            else:
+                converter.register_structure_hook_func(
+                    _predicate(model), model._structure
+                )
         else:
-            converter.register_structure_hook(
-                model,
-                lambda d, cls: structure(d, cls, converter),
-            )
+            if hasattr(model, "__cache_serializer__"):
+                cache_func = model.__cache_serializer__.cache_structure(structure)
+                converter.register_structure_hook(
+                    model,
+                    lambda d, cls, cache_func=cache_func: cache_func(d, cls, converter),
+                )
+            else:
+                converter.register_structure_hook(
+                    model, lambda d, cls: structure(d, cls, converter)
+                )
 
 
 def collect_models(module_models) -> frozenset:
@@ -171,6 +207,40 @@ def collect_models(module_models) -> frozenset:
             subclasses.append(cls)
 
     return frozenset(subclasses)
+
+
+def unstructure_enum(obj) -> str:
+    """
+    Unstructure an Enum object to its value.
+    Required for cattrs >=25.1 to handle Enum objects correctly.
+
+    Args:
+        obj: The Enum object to unstructure.
+        cls: The Enum class.
+    Returns:
+        The value of the Enum object.
+    """
+    # Intentionally not checking the type here for performance reasons.
+    # cattrs will call this function only for Enum objects.
+    return obj.value
+
+
+E = TypeVar("E", bound=Enum)
+
+
+def structure_enum(d: str, cls: Type[E]) -> E:
+    """
+    Structure a string to an Enum object.
+    Required for cattrs >=25.1 to handle Enum objects correctly.
+
+    Args:
+        d: The string to structure.
+        cls: The Enum class.
+    Returns:
+        The Enum object.
+    """
+    # Intentionally not checking the type here for performance reasons.
+    return cls(d)
 
 
 def make_laboneq_converter() -> Converter:
@@ -202,5 +272,8 @@ def make_laboneq_converter() -> Converter:
     converter.register_structure_hook(
         complex | numpy.number, _structure_complex_or_np_numbers
     )
+
+    converter.register_unstructure_hook(Enum, unstructure_enum)
+    converter.register_structure_hook(Enum, structure_enum)
 
     return converter

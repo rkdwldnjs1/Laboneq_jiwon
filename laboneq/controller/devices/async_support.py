@@ -38,7 +38,7 @@ from zhinst.comms_schemas.labone.core import (
 )
 from zhinst.comms_schemas.labone.core.errors import NotFoundError
 
-from laboneq.controller.util import LabOneQControllerException
+from laboneq.controller.utilities.exception import LabOneQControllerException
 from laboneq.controller.versioning import (
     MINIMUM_SUPPORTED_LABONE_VERSION,
     RECOMMENDED_LABONE_VERSION,
@@ -430,8 +430,10 @@ async def _gather(
             try:
                 # No list comprehension in debug for cleaner stack trace
                 results.append(await arg)  # noqa: PERF401
-            except Exception as ex:  # noqa: PERF203
-                # Defer exception and continue to avoid "was never awaited" warning
+            except BaseException as ex:  # noqa: PERF203
+                # Handle _all_ exceptions to match `asyncio.gather` behavior.
+                # Defer raising them to avoid "was never awaited" warnings,
+                # since tasks are awaited one by one here.
                 if return_exceptions:
                     results.append(ex)
                 else:

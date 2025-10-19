@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import Enum, auto
 import logging
+from laboneq.data.calibration import PortMode as RecipePortMode
 from packaging.version import Version, InvalidVersion
 from typing import TYPE_CHECKING, Any, KeysView, Literal, TypeVar, cast, overload
 
@@ -19,14 +22,15 @@ from laboneq.controller.attribute_value_tracker import (
     AttributeValueTracker,
     DeviceAttribute,
 )
-from laboneq.controller.util import LabOneQControllerException
+from laboneq.controller.utilities.exception import LabOneQControllerException
 from laboneq.core.types.enums.acquisition_type import AcquisitionType
 from laboneq.core.types.enums.averaging_mode import AveragingMode
-from laboneq.data.recipe import IO, Initialization, OscillatorParam, Recipe, SignalType
+from laboneq.data.recipe import IO, Initialization, Recipe, SignalType
 from laboneq.data.scheduled_experiment import (
     ArtifactsCodegen,
     CodegenWaveform,
     ScheduledExperiment,
+    WeightInfo,
 )
 from laboneq.executor.executor import (
     ExecutorBase,
@@ -68,17 +72,30 @@ HandleResultShapes = dict[AcquireHandle, HandleResultShape]
 @dataclass(frozen=True)
 class AwgKey:
     device_uid: DeviceUID
-    awg_index: int | str
+    awg_index: int
+
+
+class AwgType(Enum):
+    QA = auto()
+    SG = auto()
 
 
 @dataclass
 class AwgConfig:
-    # TODO(2K): use enum
-    device_type: str | None
+    awg_type: AwgType
     signals: set[str]
     # QA
     raw_acquire_length: int | None = None
     signal_raw_acquire_lengths: dict[str, int] = field(default_factory=dict)
+    # signal_id -> sequence of handle/None for each result vector entry.
+    # Important! Length must be equal for all acquire signals / integrators of one AWG.
+    # All integrators occupy an entry in the respective result vectors per startQA event,
+    # regardless of the given integrators mask. Masked-out integrators just leave the
+    # value at NaN (corresponds to None in the map).
+    # TODO(2K): to be replaced by event-based calculation in the compiler
+    signal_result_map: dict[str, list[str | None]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
     result_length: int | None = None
     acquire_signals: set[str] = field(default_factory=set)
     target_feedback_register: int | None = None
@@ -117,9 +134,55 @@ class AwgConfigs:
 
 
 @dataclass
+class QAChannelRecipeData:
+    output_enable: bool | None = None  # None means no output config provided
+    output_range: float | None = None
+    output_mute_enable: bool = False
+    input_enable: bool | None = None  # None means no input config provided
+    input_range: float | None = None
+    input_rf_path: bool = True
+
+
+@dataclass
+class OutputRouteConfig:
+    source: int
+    fixed_amplitude: float | None = None  # None means parameterized amplitude
+    fixed_phase: float | None = None  # None means parameterized phase
+    param_amplitude: str | None = None  # None means fixed amplitude
+    param_phase: str | None = None  # None means fixed phase
+
+
+@dataclass
+class SGChannelRecipeData:
+    output_enable: bool | None = None  # None means no output config provided
+    output_range: float | None = None
+    output_mute_enable: bool = False
+    modulation: bool | None = None
+    marker_source_trigger: bool = True
+    output_rf_path: bool = True
+    router_config: list[OutputRouteConfig] | None = None
+
+    def ensure_router_config(self):
+        if self.router_config is None:
+            self.router_config = []
+        return self.router_config
+
+
+@dataclass
+class AllocatedOscillator:
+    channels: set[int]
+    index: int
+    id_index: int
+    frequency: float | None
+    param: str | None
+
+
+@dataclass
 class DeviceRecipeData:
     iq_settings: dict[int, tuple[int, int]] = field(default_factory=dict)
-    osc_params: list[OscillatorParam] = field(default_factory=list)
+    allocated_oscs: list[AllocatedOscillator] = field(default_factory=list)
+    qachannels: dict[int, QAChannelRecipeData] = field(default_factory=dict)
+    sgchannels: dict[int, SGChannelRecipeData] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,10 +192,7 @@ class RtExecutionInfo:
     averaging_mode: AveragingMode
     acquisition_type: AcquisitionType
     pipeliner_job_count: int | None
-
-    # signal -> flat list of result handles
-    # TODO(2K): to be replaced by event-based calculation in the compiler
-    signal_result_map: dict[str, list[str | None]] = field(default_factory=dict)
+    max_step_execution_time: float
 
     @property
     def with_pipeliner(self) -> bool:
@@ -216,7 +276,6 @@ class RecipeData:
     device_settings: dict[DeviceUID, DeviceRecipeData]
     awg_configs: AwgConfigs
     attribute_value_tracker: AttributeValueTracker
-    oscillator_ids: list[str]
 
     def get_initialization(self, device_uid: DeviceUID) -> Initialization:
         for initialization in self.recipe.initializations:
@@ -231,6 +290,36 @@ class RecipeData:
         for awg_key, awg_config in self.awg_configs.items():
             if awg_config.result_length is not None:
                 yield awg_key, awg_config
+
+    def awg_by_seqc_name(self, seqc_name: str) -> AwgKey | None:
+        for rt_exec_step in self.recipe.realtime_execution_init:
+            if rt_exec_step.program_ref == seqc_name:
+                return AwgKey(rt_exec_step.device_id, rt_exec_step.awg_index)
+        return None
+
+
+def _validate_recipe(recipe: Recipe | None) -> Recipe:
+    # Recipe is present
+    assert recipe is not None
+
+    # Recipe version is correct
+    try:
+        if (
+            Version(Version(recipe.versions.laboneq).base_version)
+            < MIN_LABONEQ_VERSION_FOR_COMPILED_EXPERIMENT
+        ):
+            raise LabOneQControllerException(
+                f"The experiment was compiled with LabOne Q version {recipe.versions.laboneq}, which is not compatible. "
+                "Please recompile using the current LabOne Q version."
+            )
+    except InvalidVersion:
+        _logger.warning(
+            "The experiment was compiled with an invalid LabOne Q version '%s'. "
+            "Passing, as this is only expected to happen in tests. Consider ensuring that the valid version is set.",
+            recipe.versions.laboneq,
+        )
+
+    return recipe
 
 
 def _pre_process_iq_settings_hdawg(
@@ -280,6 +369,128 @@ def _pre_process_iq_settings_hdawg(
     return iq_settings
 
 
+def _pre_process_oscillator_allocations(
+    recipe: Recipe, oscillator_ids: list[str], device_id: str
+):
+    allocated_oscs: list[AllocatedOscillator] = []
+    for osc_param in recipe.oscillator_params:
+        if osc_param.device_id != device_id:
+            continue
+        osc_id_index = oscillator_ids.index(osc_param.id)
+        same_id_osc = next(
+            (osc for osc in allocated_oscs if osc.id_index == osc_id_index), None
+        )
+        if same_id_osc is None:
+            allocated_oscs.append(
+                AllocatedOscillator(
+                    channels={osc_param.channel},
+                    index=osc_param.allocated_index,
+                    id_index=osc_id_index,
+                    frequency=osc_param.frequency,
+                    param=osc_param.param,
+                )
+            )
+        else:
+            if same_id_osc.frequency != osc_param.frequency:
+                raise LabOneQControllerException(
+                    f"Ambiguous frequency in recipe for oscillator "
+                    f"'{osc_param.id}': {same_id_osc.frequency} != {osc_param.frequency}"
+                )
+            if same_id_osc.index != osc_param.allocated_index:
+                raise LabOneQControllerException(
+                    f"Ambiguous index in recipe for oscillator "
+                    f"'{osc_param.id}': {same_id_osc.index} != {osc_param.allocated_index}"
+                )
+            same_id_osc.channels.add(osc_param.channel)
+    return allocated_oscs
+
+
+def _pre_process_qa_channels(
+    initialization: Initialization | None,
+) -> dict[int, QAChannelRecipeData]:
+    if initialization is None or initialization.device_type != "SHFQA":
+        return {}
+
+    channels: dict[int, QAChannelRecipeData] = {}
+
+    def _get_channel_data(channel: int) -> QAChannelRecipeData:
+        channel_data = channels.get(channel)
+        if channel_data is None:
+            channel_data = QAChannelRecipeData()
+            channels[channel] = channel_data
+        return channel_data
+
+    outputs = initialization.outputs or []
+    for output in outputs:
+        channel_data = _get_channel_data(output.channel)
+        channel_data.output_enable = True
+        channel_data.output_range = output.range
+        channel_data.output_mute_enable = output.enable_output_mute
+
+    for input in initialization.inputs or []:
+        channel_data = _get_channel_data(input.channel)
+        channel_data.input_enable = True
+        channel_data.input_range = input.range
+        channel_data.input_rf_path = (
+            input.port_mode is None or input.port_mode == RecipePortMode.RF.value
+        )
+
+    return channels
+
+
+def _pre_process_sg_channels(
+    initialization: Initialization | None,
+) -> dict[int, SGChannelRecipeData]:
+    if initialization is None or initialization.device_type != "SHFSG":
+        return {}
+
+    channels: dict[int, SGChannelRecipeData] = {}
+
+    def _get_channel_data(channel: int) -> SGChannelRecipeData:
+        channel_data = channels.get(channel)
+        if channel_data is None:
+            channel_data = SGChannelRecipeData()
+            channels[channel] = channel_data
+        return channel_data
+
+    outputs = initialization.outputs or []
+    for output in outputs:
+        channel_data = _get_channel_data(output.channel)
+        channel_data.output_enable = True
+        channel_data.output_range = output.range
+        channel_data.output_mute_enable = output.enable_output_mute
+        channel_data.modulation = output.modulation
+        channel_data.marker_source_trigger = output.marker_mode != "MARKER"
+        channel_data.output_rf_path = (
+            output.port_mode is None or output.port_mode == "rf"
+        )
+        for route in output.routed_outputs:
+            fixed_amplitude, param_amplitude = (
+                (None, route.amplitude)
+                if isinstance(route.amplitude, str)
+                else (route.amplitude, None)
+            )
+            fixed_phase, param_phase = (
+                (None, route.phase)
+                if isinstance(route.phase, str)
+                else (route.phase, None)
+            )
+            channel_data.ensure_router_config().append(
+                OutputRouteConfig(
+                    source=route.from_channel,
+                    fixed_amplitude=fixed_amplitude,
+                    fixed_phase=fixed_phase,
+                    param_amplitude=param_amplitude,
+                    param_phase=param_phase,
+                )
+            )
+            # Also enable the router for the source channel, even if no other sources are routing to it,
+            # to ensure latency matches between source and destination channels.
+            _get_channel_data(route.from_channel).ensure_router_config()
+
+    return channels
+
+
 @dataclass
 class _LoopStackEntry:
     count: int
@@ -296,45 +507,104 @@ class _LoopStackEntry:
         return self.axis_points[0] if len(self.axis_points) == 1 else self.axis_points
 
 
+@dataclass
+class _RtExecutionState:
+    uid: str
+    averages: int
+    averaging_mode: AveragingMode
+    acquisition_type: AcquisitionType
+
+
 class _LoopsPreprocessor(ExecutorBase):
     def __init__(self):
         super().__init__(looping_mode=LoopingMode.ONCE)
 
-        self.result_shapes: HandleResultShapes = {}
-        self._rt_execution_info: RtExecutionInfo | None = None
-        self.pipeliner_job_count: int | None = None
+        self._result_shapes: HandleResultShapes = {}
         self._loop_stack: list[_LoopStackEntry] = []
-        self._current_rt_info: RtExecutionInfo | None = None
+        self._current_rt_state: _RtExecutionState | None = None
+        self._last_rt_state: _RtExecutionState | None = None
 
-    @property
-    def rt_execution_info(self) -> RtExecutionInfo:
-        if self._rt_execution_info is None:
+    def get_rt_execution_info(
+        self, pipeliner_job_count: int | None, max_step_execution_time: float
+    ) -> RtExecutionInfo:
+        if self._last_rt_state is None:
             raise LabOneQControllerException(
                 "No 'acquire_loop_rt' section found in the experiment."
             )
-        return self._rt_execution_info
+        return RtExecutionInfo(
+            uid=self._last_rt_state.uid,
+            averages=self._last_rt_state.averages,
+            averaging_mode=self._last_rt_state.averaging_mode,
+            acquisition_type=self._last_rt_state.acquisition_type,
+            pipeliner_job_count=pipeliner_job_count,
+            max_step_execution_time=max_step_execution_time,
+        )
+
+    def get_result_shapes(
+        self,
+        devices: DeviceCollection,
+        awg_configs: AwgConfigs,
+        scheduled_experiment: ScheduledExperiment,
+        rt_execution_info: RtExecutionInfo,
+    ) -> HandleResultShapes:
+        result_shapes: HandleResultShapes = HandleResultShapes()
+        for handle, shape_info in self._result_shapes.items():
+            # Append extra dimension for multiple acquires with the same handle
+            axis_name = deepcopy(shape_info.base_axis_name)
+            axis = deepcopy(shape_info.base_axis)
+            shape = deepcopy(shape_info.base_shape)
+            if shape_info.handle_acquire_count > 1:
+                axis_name.append(handle)
+                axis.append(
+                    np.arange(shape_info.handle_acquire_count, dtype=np.float64)
+                )
+                shape.append(shape_info.handle_acquire_count)
+
+            # Append extra dimension for samples of the raw acquisition
+            if rt_execution_info.is_raw_acquisition:
+                signal_id = shape_info.signal
+                awg_key, awg_config = awg_configs.by_signal(signal_id)
+                device = devices.find_by_uid(awg_key.device_uid)
+                raw_acquire_length = device.calc_raw_acquire_length(
+                    scheduled_experiment.artifacts,
+                    awg_config,
+                    signal_id,
+                    handle,
+                )
+                axis_name.append("samples")
+                axis.append(np.arange(raw_acquire_length, dtype=np.float64))
+                shape.append(raw_acquire_length)
+
+            result_shapes[handle] = HandleResultShape(
+                signal=shape_info.signal,
+                base_shape=shape,
+                base_axis_name=axis_name,
+                base_axis=axis,
+            )
+
+        return result_shapes
 
     @property
-    def current_rt_info(self) -> RtExecutionInfo:
-        assert self._current_rt_info is not None
-        return self._current_rt_info
+    def current_rt_state(self) -> _RtExecutionState:
+        assert self._current_rt_state is not None
+        return self._current_rt_state
 
     def _single_shot_axis(self) -> NumPyArray:
         return np.linspace(
-            0, self.current_rt_info.averages - 1, self.current_rt_info.averages
+            0, self.current_rt_state.averages - 1, self.current_rt_state.averages
         )
 
     def acquire_handler(self, handle: str, signal: str, parent_uid: str):
         # Determine result shape for each acquire handle
         single_shot_cyclic = (
-            self.current_rt_info.averaging_mode == AveragingMode.SINGLE_SHOT
+            self.current_rt_state.averaging_mode == AveragingMode.SINGLE_SHOT
         )
         shape = [
             loop.count
             for loop in self._loop_stack
             if not loop.is_averaging or single_shot_cyclic
         ]
-        known_shape = self.result_shapes.get(handle)
+        known_shape = self._result_shapes.get(handle)
         if known_shape is None:
             axis_name = [
                 loop.axis_name
@@ -346,7 +616,7 @@ class _LoopsPreprocessor(ExecutorBase):
                 for loop in self._loop_stack
                 if not loop.is_averaging or single_shot_cyclic
             ]
-            self.result_shapes[handle] = HandleResultShape(
+            self._result_shapes[handle] = HandleResultShape(
                 signal=signal,
                 base_shape=shape,
                 base_axis_name=axis_name,
@@ -371,10 +641,10 @@ class _LoopsPreprocessor(ExecutorBase):
         )
         if loop_flags.is_average:
             single_shot_cyclic = (
-                self.current_rt_info.averaging_mode == AveragingMode.SINGLE_SHOT
+                self.current_rt_state.averaging_mode == AveragingMode.SINGLE_SHOT
             )
             if single_shot_cyclic:
-                self._loop_stack[-1].axis_names.append(self.current_rt_info.uid)
+                self._loop_stack[-1].axis_names.append(self.current_rt_state.uid)
                 self._loop_stack[-1].axis_points.append(self._single_shot_axis())
 
     def for_loop_exit_handler(self, count: int, index: int, loop_flags: LoopFlags):
@@ -387,16 +657,15 @@ class _LoopsPreprocessor(ExecutorBase):
         averaging_mode: AveragingMode,
         acquisition_type: AcquisitionType,
     ):
-        if self._rt_execution_info is not None and self._rt_execution_info.uid != uid:
+        if self._last_rt_state is not None and self._last_rt_state.uid != uid:
             raise LabOneQControllerException(
                 "Multiple 'acquire_loop_rt' sections per experiment is not supported."
             )
-        self._current_rt_info = RtExecutionInfo(
+        self._current_rt_state = _RtExecutionState(
             uid=uid,
             averages=count,
             averaging_mode=averaging_mode,
             acquisition_type=acquisition_type,
-            pipeliner_job_count=self.pipeliner_job_count,
         )
 
     def rt_exit_handler(
@@ -406,25 +675,35 @@ class _LoopsPreprocessor(ExecutorBase):
         averaging_mode: AveragingMode,
         acquisition_type: AcquisitionType,
     ):
-        if self._current_rt_info is None:
+        if self._current_rt_state is None:
             raise LabOneQControllerException(
                 "Nested 'acquire_loop_rt' are not allowed."
             )
-        self._rt_execution_info = self._current_rt_info
-        self._current_rt_info = None
+        self._last_rt_state = self._current_rt_state
+        self._current_rt_state = None
 
 
 def _calculate_awg_configs(
     rt_execution_info: RtExecutionInfo,
+    scheduled_experiment: ScheduledExperiment,
     recipe: Recipe,
     devices: DeviceCollection,
 ) -> AwgConfigs:
     awg_configs = AwgConfigs()
 
+    for _, device in devices.all:
+        device.fetch_awg_configs(awg_configs, scheduled_experiment.artifacts)
+
     for initialization in recipe.initializations:
+        awg_type = (
+            AwgType.QA
+            if initialization.device_type is not None
+            and initialization.device_type.startswith("SHFQA")
+            else AwgType.SG
+        )
         for awg in initialization.awgs or []:
             awg_config = AwgConfig(
-                device_type=initialization.device_type,
+                awg_type=awg_type,
                 signals=set(awg.signals.keys()),
                 target_feedback_register=awg.target_feedback_register,
                 source_feedback_register=awg.source_feedback_register,
@@ -438,18 +717,23 @@ def _calculate_awg_configs(
                         "Global feedback over QHub is not implemented."
                     )
                 awg_config.fb_reg_source_index = awg.feedback_register_index_select
-                assert isinstance(awg.awg, int)
                 awg_config.fb_reg_target_index = awg.awg
-            if initialization.device_type == "PRETTYPRINTERDEVICE":
-                awg_config.result_length = -1  # result shape determined by device
-            awg_configs.add(AwgKey(initialization.device_uid, awg.awg), awg_config)
+            awg_configs.add(
+                AwgKey(device_uid=initialization.device_uid, awg_index=awg.awg),
+                awg_config,
+            )
 
     for integrator_allocation in recipe.integrator_allocations:
-        awg_key = AwgKey(integrator_allocation.device_id, integrator_allocation.awg)
+        awg_key = AwgKey(
+            device_uid=integrator_allocation.device_id,
+            awg_index=integrator_allocation.awg,
+        )
         awg_configs[awg_key].acquire_signals.add(integrator_allocation.signal_id)
 
-    acquire_lengths = {al.signal_id: al.acquire_length for al in recipe.acquire_lengths}
-    acquire_signals = set(acquire_lengths.keys())
+    raw_acquire_length_by_signal = {
+        al.signal_id: al.acquire_length for al in recipe.acquire_lengths
+    }
+    raw_acquire_signals = set(raw_acquire_length_by_signal.keys())
 
     # Determine the raw acquisition lengths across various acquire events.
     # Will use the maximum length, as scope / monitor can only be configured for one.
@@ -457,12 +741,11 @@ def _calculate_awg_configs(
     raw_acquire_lengths: dict[str, dict[str, int]] = defaultdict(dict)
     raw_acquire_channels: dict[str, set[int]] = defaultdict(set)
     if rt_execution_info.acquisition_type == AcquisitionType.RAW:
-        for signal in acquire_signals:
+        for signal in raw_acquire_signals:
             ac_awg_key, _ = awg_configs.by_signal(signal)
-            raw_acquire_lengths[ac_awg_key.device_uid][signal] = acquire_lengths.get(
-                signal, 0
+            raw_acquire_lengths[ac_awg_key.device_uid][signal] = (
+                raw_acquire_length_by_signal.get(signal, 0)
             )
-            assert isinstance(ac_awg_key.awg_index, int)
             raw_acquire_channels[ac_awg_key.device_uid].add(ac_awg_key.awg_index)
     for awg_key, awg_config in awg_configs.items():
         dev_raw_acquire_lengths = raw_acquire_lengths.get(awg_key.device_uid, {})
@@ -471,20 +754,15 @@ def _calculate_awg_configs(
         awg_config.raw_acquire_length = raw_acquire_length
         awg_config.signal_raw_acquire_lengths = dev_raw_acquire_lengths
 
-        # signal_id -> sequence of handle/None for each result vector entry.
-        # Important! Length must be equal for all acquire signals / integrators of one AWG.
-        # All integrators occupy an entry in the respective result vectors per startQA event,
-        # regardless of the given integrators mask. Masked-out integrators just leave the
-        # value at NaN (corresponds to None in the map).
-        awg_result_map: dict[str, list[str | None]] = defaultdict(list)
         for acquires in recipe.simultaneous_acquires:
             if any(signal in acquires for signal in awg_config.acquire_signals):
                 for signal in awg_config.acquire_signals:
-                    awg_result_map[signal].append(acquires.get(signal))
-        if len(awg_result_map) > 0:
-            rt_execution_info.signal_result_map.update(awg_result_map)
+                    awg_config.signal_result_map[signal].append(acquires.get(signal))
+        if len(awg_config.signal_result_map) > 0:
             # All lengths are the same, see comment above.
-            any_awg_signal_result_map = next(iter(awg_result_map.values()))
+            any_awg_signal_result_map = next(
+                iter(awg_config.signal_result_map.values())
+            )
             result_length = (
                 len(any_awg_signal_result_map) * rt_execution_info.mapping_repeats
             )
@@ -497,10 +775,7 @@ def _calculate_awg_configs(
                     raise LabOneQControllerException(
                         "Sequential averaging is not supported for raw acquisitions."
                     )
-                device_type = awg_config.device_type
-                if device_type is None:
-                    device_type = ""
-                if device_type.startswith("SHFQA"):  # SHFQA or SHFQC/QA
+                if awg_config.awg_type == AwgType.QA:
                     if devices.find_by_uid(awg_key.device_uid).options.is_qc:
                         SCOPE_MEMORY_SIZE = 64 * 1024
                     else:
@@ -532,34 +807,27 @@ def _calculate_awg_configs(
 
 
 def _pre_process_attributes(
-    recipe: Recipe, devices: DeviceCollection
-) -> tuple[AttributeValueTracker, list[str], dict[str, list[OscillatorParam]]]:
+    recipe: Recipe, devices: DeviceCollection, oscillator_ids: list[str]
+) -> AttributeValueTracker:
     attribute_value_tracker = AttributeValueTracker()
-    oscillator_ids: list[str] = []
     oscillators_check: dict[str, str | float] = {}
 
-    osc_params_per_device = defaultdict(list)
-    # Sort oscillator params by id to match the order in the compiler
-    for oscillator_param in sorted(recipe.oscillator_params, key=lambda p: p.id):
-        osc_params_per_device[oscillator_param.device_id].append(oscillator_param)
+    for oscillator_param in recipe.oscillator_params:
         value_or_param = oscillator_param.param or oscillator_param.frequency
         assert value_or_param is not None, "undefined oscillator frequency"
-        if oscillator_param.id in oscillator_ids:
-            osc_param_index = oscillator_ids.index(oscillator_param.id)
+        if oscillator_param.id in oscillators_check:
             if oscillators_check[oscillator_param.id] != value_or_param:
                 raise LabOneQControllerException(
                     f"Conflicting specifications for the same oscillator id '{oscillator_param.id}' "
                     f"in the recipe: '{oscillators_check[oscillator_param.id]}' != '{value_or_param}'"
                 )
         else:
-            osc_param_index = len(oscillator_ids)
-            oscillator_ids.append(oscillator_param.id)
             oscillators_check[oscillator_param.id] = value_or_param
         attribute_value_tracker.add_attribute(
             device_uid=oscillator_param.device_id,
             attribute=DeviceAttribute(
                 name=AttributeName.OSCILLATOR_FREQ,
-                index=osc_param_index,
+                index=oscillator_ids.index(oscillator_param.id),
                 value_or_param=value_or_param,
             ),
         )
@@ -572,7 +840,7 @@ def _pre_process_attributes(
                 attribute=attribute,
             )
 
-    return attribute_value_tracker, oscillator_ids, osc_params_per_device
+    return attribute_value_tracker
 
 
 def pre_process_compiled(
@@ -581,27 +849,6 @@ def pre_process_compiled(
 ) -> RecipeData:
     for _, device in devices.all:
         device.validate_scheduled_experiment(scheduled_experiment)
-
-    recipe = scheduled_experiment.recipe
-    assert recipe is not None
-    execution = scheduled_experiment.execution
-    assert execution is not None
-
-    try:
-        if (
-            Version(Version(recipe.versions.laboneq).base_version)
-            < MIN_LABONEQ_VERSION_FOR_COMPILED_EXPERIMENT
-        ):
-            raise LabOneQControllerException(
-                f"The experiment was compiled with LabOne Q version {recipe.versions.laboneq}, which is not compatible. "
-                "Please recompile using the current LabOne Q version."
-            )
-    except InvalidVersion:
-        _logger.warning(
-            "The experiment was compiled with an invalid LabOne Q version '%s'. "
-            "Passing, as this is only expected to happen in tests. Consider ensuring that the valid version is set.",
-            recipe.versions.laboneq,
-        )
 
     if (
         scheduled_experiment.device_setup_fingerprint
@@ -612,43 +859,84 @@ def pre_process_compiled(
             "Please recompile using the current device setup."
         )
 
-    attribute_value_tracker, oscillator_ids, osc_params_per_device = (
-        _pre_process_attributes(recipe, devices)
-    )
+    recipe = _validate_recipe(scheduled_experiment.recipe)
+
+    # Mapping of the unique oscillator ids to integer indices for use with the AttributeValueTracker
+    oscillator_ids = list(set(o.id for o in recipe.oscillator_params))
 
     device_settings: dict[DeviceUID, DeviceRecipeData] = {
         device_uid: DeviceRecipeData(
             iq_settings=_pre_process_iq_settings_hdawg(
                 get_initialization_by_device_uid(recipe, device_uid)
             ),
-            osc_params=osc_params_per_device.get(device_uid, []),
+            allocated_oscs=_pre_process_oscillator_allocations(
+                recipe, oscillator_ids, device_uid
+            ),
+            qachannels=_pre_process_qa_channels(
+                get_initialization_by_device_uid(recipe, device_uid)
+            ),
+            sgchannels=_pre_process_sg_channels(
+                get_initialization_by_device_uid(recipe, device_uid)
+            ),
         )
         for device_uid, _ in devices.all
     }
 
-    lp = _LoopsPreprocessor()
-    lp.pipeliner_job_count = scheduled_experiment.chunk_count
-    lp.run(execution)
-    rt_execution_info = lp.rt_execution_info
+    execution = scheduled_experiment.execution
+    assert execution is not None
 
-    awg_configs = _calculate_awg_configs(rt_execution_info, recipe, devices)
+    lp = _LoopsPreprocessor()
+    lp.run(execution)
+    rt_execution_info = lp.get_rt_execution_info(
+        scheduled_experiment.chunk_count, recipe.max_step_execution_time
+    )
+
+    awg_configs = _calculate_awg_configs(
+        rt_execution_info, scheduled_experiment, recipe, devices
+    )
+
+    result_shapes = lp.get_result_shapes(
+        devices, awg_configs, scheduled_experiment, rt_execution_info
+    )
 
     recipe_data = RecipeData(
         scheduled_experiment=scheduled_experiment,
         recipe=recipe,
         execution=execution,
-        result_shapes=lp.result_shapes,
+        result_shapes=result_shapes,
         rt_execution_info=rt_execution_info,
         device_settings=device_settings,
         awg_configs=awg_configs,
-        attribute_value_tracker=attribute_value_tracker,
-        oscillator_ids=oscillator_ids,
+        attribute_value_tracker=_pre_process_attributes(
+            recipe, devices, oscillator_ids
+        ),
     )
 
     for _, device in devices.all:
         device.validate_recipe_data(recipe_data)
 
     return recipe_data
+
+
+def get_execution_time(rt_execution_info: RtExecutionInfo) -> tuple[float, float]:
+    min_wait_time = rt_execution_info.max_step_execution_time
+    if rt_execution_info.with_pipeliner:
+        pipeliner_reload_worst_case = 1500e-6
+        min_wait_time = (
+            min_wait_time + pipeliner_reload_worst_case
+        ) * rt_execution_info.pipeliner_jobs
+
+    guarded_wait_time = round(min_wait_time * 1.1 + 1)  # +10% and fixed 1sec guard time
+
+    return min_wait_time, guarded_wait_time
+
+
+def get_weights_info(
+    artifacts: ArtifactsCodegen, kernel_ref: str | None
+) -> dict[str, list[WeightInfo]]:
+    if kernel_ref is None:
+        return {}
+    return artifacts.integration_weights.get(kernel_ref, {})
 
 
 @overload

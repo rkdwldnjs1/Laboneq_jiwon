@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Iterator, cast
+from typing import TYPE_CHECKING, Any, Iterator
 from weakref import ReferenceType, ref
 
 from laboneq.controller.devices.channel_base import ChannelBase
@@ -51,6 +51,7 @@ from laboneq.controller.devices.node_control import (
 from laboneq.controller.pipeliner_reload_tracker import PipelinerReloadTracker
 from laboneq.controller.recipe_processor import (
     AwgConfig,
+    AwgConfigs,
     AwgKey,
     RecipeData,
     RtExecutionInfo,
@@ -60,14 +61,13 @@ from laboneq.controller.recipe_processor import (
     prepare_command_table,
     prepare_waves,
 )
-from laboneq.controller.util import LabOneQControllerException
+from laboneq.controller.utilities.exception import LabOneQControllerException
 from laboneq.controller.versioning import SetupCaps
 from laboneq.core.types.enums.acquisition_type import AcquisitionType
 from laboneq.data.recipe import (
     Initialization,
     IntegratorAllocation,
     NtStepKey,
-    OscillatorParam,
 )
 from laboneq.data.scheduled_experiment import (
     ArtifactsCodegen,
@@ -75,7 +75,7 @@ from laboneq.data.scheduled_experiment import (
 )
 
 if TYPE_CHECKING:
-    from laboneq.core.types.numpy_support import NumPyArray
+    import numpy as np
 
 
 _logger = logging.getLogger(__name__)
@@ -88,18 +88,6 @@ class AwgCompilerStatus(Enum):
 
 
 @dataclass
-class AllocatedOscillator:
-    # Oscillators may be grouped in HW, restricting certain channels to oscillators
-    # from specific groups. Allocation is performed within each group.
-    group: int
-    channels: set[int]
-    index: int
-    id: str
-    frequency: float | None
-    param: str | None
-
-
-@dataclass
 class SequencerPaths:
     elf: str
     progress: str
@@ -109,15 +97,14 @@ class SequencerPaths:
 
 @dataclass
 class RawReadoutData:
-    vector: NumPyArray
+    vector: np.ndarray
 
     # metadata by job_id
     metadata: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 def delay_to_rounded_samples(
-    channel: int,
-    dev_repr: str,
+    ch_repr: str,
     delay: float,
     sample_frequency_hz,
     granularity_samples,
@@ -125,7 +112,7 @@ def delay_to_rounded_samples(
 ) -> int:
     if delay < 0:
         raise LabOneQControllerException(
-            f"Negative node delay for device {dev_repr} and channel {channel} specified."
+            f"Negative node delay for channel {ch_repr} specified."
         )
 
     delay_samples = delay * sample_frequency_hz
@@ -136,17 +123,16 @@ def delay_to_rounded_samples(
 
     if delay_rounded > max_node_delay_samples:
         raise LabOneQControllerException(
-            f"Maximum delay via {dev_repr}'s node is "
+            f"Maximum delay via {ch_repr}'s node is "
             + f"{max_node_delay_samples / sample_frequency_hz * 1e9:.2f} ns - for larger "
             + "values, use the delay_signal property."
         )
     if abs(delay_samples - delay_rounded) > 1:
         _logger.debug(
-            "Node delay %.2f ns of %s, channel %d will be rounded to "
+            "Node delay %.2f ns of %s will be rounded to "
             "%.2f ns, a multiple of %.0f samples.",
             delay_samples / sample_frequency_hz * 1e9,
-            dev_repr,
-            channel,
+            ch_repr,
             delay_rounded / sample_frequency_hz * 1e9,
             granularity_samples,
         )
@@ -247,7 +233,7 @@ class DeviceZI(DeviceAbstract):
         pass
 
     @abstractmethod
-    def disconnect(self):
+    async def disconnect(self):
         pass
 
     async def disable_outputs(self, outputs: set[int], invert: bool):
@@ -277,6 +263,9 @@ class DeviceZI(DeviceAbstract):
     def validate_recipe_data(self, recipe_data: RecipeData):
         pass
 
+    def fetch_awg_configs(self, awg_configs: AwgConfigs, artifacts: Any):
+        pass
+
     def pre_process_attributes(
         self,
         initialization: Initialization,
@@ -286,10 +275,10 @@ class DeviceZI(DeviceAbstract):
     @abstractmethod
     def calc_raw_acquire_length(
         self,
-        recipe_data: RecipeData,
-        awg_key: AwgKey,
+        artifacts: Any,
         awg_config: AwgConfig,
         signal_id: str,
+        handle: str,
     ) -> int: ...
 
     @abstractmethod
@@ -300,18 +289,13 @@ class DeviceZI(DeviceAbstract):
     ):
         pass
 
-    def prepare_upload_binary_wave(
-        self,
-        awg_index: int,
-        wave: WaveformItem,
-        acquisition_type: AcquisitionType,
-    ) -> NodeCollector:
-        return NodeCollector()
+    def add_waveform_replacement(
+        self, awg_index: int, wave: WaveformItem, acquisition_type: AcquisitionType
+    ):
+        pass
 
-    def prepare_upload_command_table(
-        self, awg_index, command_table: dict
-    ) -> NodeCollector:
-        return NodeCollector()
+    def add_command_table_replacement(self, awg_index: int, command_table: dict):
+        pass
 
     async def fetch_errors(self) -> str | list[str]:
         return []
@@ -345,7 +329,6 @@ class DeviceBase(DeviceZI):
         self.dev_opts: list[str] = []
         self._connected = False
         self._voltage_offsets: dict[int, float] = {}
-        self._allocated_oscs: list[AllocatedOscillator] = []
         self._allocated_awgs: set[int] = set()
         self._pipeliner_reload_tracker: dict[int, PipelinerReloadTracker] = defaultdict(
             PipelinerReloadTracker
@@ -353,6 +336,7 @@ class DeviceBase(DeviceZI):
         self._sampling_rate: float | None = None
         self._enable_runtime_checks = True
         self._warning_nodes: dict[str, int] = {}
+        self._near_time_artifact_replacement_nodes = NodeCollector()
 
         if self.serial is None:
             raise LabOneQControllerException(
@@ -474,10 +458,10 @@ class DeviceBase(DeviceZI):
 
     def calc_raw_acquire_length(
         self,
-        recipe_data: RecipeData,
-        awg_key: AwgKey,
+        artifacts: Any,
         awg_config: AwgConfig,
         signal_id: str,
+        handle: str,  # unused; all scope acquisitions must share the same length regardless of handle
     ) -> int:
         if signal_id not in awg_config.signal_raw_acquire_lengths:
             # Use default length 4096, in case AWG config is not available
@@ -514,9 +498,6 @@ class DeviceBase(DeviceZI):
         emulator_state: EmulatorState | None,
         timeout_s: float,
     ):
-        if self._connected:
-            return
-
         _logger.debug("%s: Connecting to %s interface.", self.dev_repr, self.interface)
         try:
             self._api = await InstrumentConnection.connect(
@@ -543,34 +524,25 @@ class DeviceBase(DeviceZI):
             self.dev_opts = dev_opts.upper().splitlines()
         self._process_dev_opts()
 
-        self._connected = True
-
     async def connect(
         self,
         emulator_state: EmulatorState | None,
         disable_runtime_checks: bool,
         timeout_s: float,
     ):
+        if self._connected:
+            return
+
         self._enable_runtime_checks = not disable_runtime_checks
         await self._connect_to_data_server(emulator_state, timeout_s=timeout_s)
+        self._connected = True
 
-    def disconnect(self):
+    async def disconnect(self):
         if not self._connected:
             return
 
         self._api = InstrumentConnection()  # TODO(2K): Proper disconnect?
         self._connected = False
-
-    def _osc_group_by_channel(self, channel: int) -> int:
-        return channel
-
-    def _get_next_osc_index(
-        self,
-        osc_group_oscs: list[AllocatedOscillator],
-        osc_param: OscillatorParam,
-        recipe_data: RecipeData,
-    ) -> int | None:
-        return None
 
     def _make_osc_path(self, channel: int, index: int) -> str:
         return f"/{self.serial}/oscs/{index}/freq"
@@ -579,48 +551,14 @@ class DeviceBase(DeviceZI):
         return []
 
     def allocate_resources(self, recipe_data: RecipeData):
-        self._allocated_oscs.clear()
         self._allocated_awgs.clear()
         self._pipeliner_reload_tracker.clear()
+        self._near_time_artifact_replacement_nodes.clear()
         for_each_sync(self.all_channels(), ChannelBase.allocate_resources)
-
-        device_recipe_data = recipe_data.device_settings[self.uid]
-        for osc_param in device_recipe_data.osc_params:
-            self._allocate_osc_impl(osc_param, recipe_data)
 
         for awg_key in recipe_data.awg_configs.keys():
             if awg_key.device_uid == self.uid:
-                assert isinstance(awg_key.awg_index, int)
                 self._allocated_awgs.add(awg_key.awg_index)
-
-    def _allocate_osc_impl(self, osc_param: OscillatorParam, recipe_data: RecipeData):
-        osc_group = self._osc_group_by_channel(osc_param.channel)
-        osc_group_oscs = [o for o in self._allocated_oscs if o.group == osc_group]
-        same_id_osc = next((o for o in osc_group_oscs if o.id == osc_param.id), None)
-        if same_id_osc is None:
-            new_index = self._get_next_osc_index(osc_group_oscs, osc_param, recipe_data)
-            if new_index is None:
-                raise LabOneQControllerException(
-                    f"{self.dev_repr}: exceeded the number of available oscillators for "
-                    f"channel {osc_param.channel}"
-                )
-            self._allocated_oscs.append(
-                AllocatedOscillator(
-                    group=osc_group,
-                    channels={osc_param.channel},
-                    index=new_index,
-                    id=osc_param.id,
-                    frequency=osc_param.frequency,
-                    param=osc_param.param,
-                )
-            )
-        else:
-            if same_id_osc.frequency != osc_param.frequency:
-                raise LabOneQControllerException(
-                    f"{self.dev_repr}: ambiguous frequency in recipe for oscillator "
-                    f"'{osc_param.id}': {same_id_osc.frequency} != {osc_param.frequency}"
-                )
-            same_id_osc.channels.add(osc_param.channel)
 
     async def on_experiment_begin(self):
         await _gather(
@@ -670,34 +608,42 @@ class DeviceBase(DeviceZI):
     async def set_nt_step_nodes(
         self, recipe_data: RecipeData, user_set_nodes: NodeCollector
     ):
-        nc = NodeCollector()
+        attributes = recipe_data.attribute_value_tracker.device_view(self.uid)
+        await _gather(
+            self._set_user_nodes(user_set_nodes),
+            self._set_oscs(recipe_data, attributes),
+            self._set_nt_step_nodes(recipe_data, attributes),
+        )
 
+    async def _set_user_nodes(self, user_set_nodes: NodeCollector):
+        nc = NodeCollector()
         if not self.is_secondary:
             for node_action in user_set_nodes.set_actions():
                 if m := re.match(r"^/?(dev[^/]+)/.+", node_action.path.lower()):
                     serial = m.group(1)
                     if serial == self.serial:
                         nc.add_node_action(node_action)
-
-        attributes = recipe_data.attribute_value_tracker.device_view(self.uid)
-        nc.extend(self._collect_prepare_nt_step_nodes(attributes, recipe_data))
-
         await self.set_async(nc)
 
-    def _collect_prepare_nt_step_nodes(
-        self, attributes: DeviceAttributesView, recipe_data: RecipeData
-    ) -> NodeCollector:
+    async def _set_oscs(
+        self, recipe_data: RecipeData, attributes: DeviceAttributesView
+    ):
         nc = NodeCollector()
-        for osc in self._allocated_oscs:
-            osc_param_index = recipe_data.oscillator_ids.index(osc.id)
+        device_recipe_data = recipe_data.device_settings[self.uid]
+        for osc in device_recipe_data.allocated_oscs:
             [osc_freq], updated = attributes.resolve(
-                keys=[(AttributeName.OSCILLATOR_FREQ, osc_param_index)]
+                keys=[(AttributeName.OSCILLATOR_FREQ, osc.id_index)]
             )
             if updated:
                 osc_freq_adjusted = self._adjust_frequency(osc_freq)
                 for ch in osc.channels:
                     nc.add(self._make_osc_path(ch, osc.index), osc_freq_adjusted)
-        return nc
+        await self.set_async(nc)
+
+    async def _set_nt_step_nodes(
+        self, recipe_data: RecipeData, attributes: DeviceAttributesView
+    ):
+        return
 
     async def set_before_awg_upload(self, recipe_data: RecipeData):
         pass
@@ -747,7 +693,7 @@ class DeviceBase(DeviceZI):
         init_awgs = [] if initialization.awgs is None else initialization.awgs
         awg_index: int | None = None
         for awg in init_awgs:
-            if isinstance(awg.awg, int) and awg.awg == target_awg_index:
+            if awg.awg == target_awg_index:
                 awg_index = target_awg_index
                 break
         if awg_index is None:
@@ -781,7 +727,7 @@ class DeviceBase(DeviceZI):
                     r
                     for r in recipe_data.recipe.realtime_execution_init
                     if r.device_id == self.uid
-                    and r.awg_id == awg_index
+                    and r.awg_index == awg_index
                     and r.nt_step == effective_nt_step
                 ),
                 None,
@@ -832,7 +778,6 @@ class DeviceBase(DeviceZI):
                 # TODO(2K): Cleanup arguments to prepare_upload_all_integration_weights
                 self.prepare_upload_all_integration_weights(
                     recipe_data,
-                    self.uid,
                     awg_index,
                     artifacts,
                     recipe_data.recipe.integrator_allocations,
@@ -853,6 +798,18 @@ class DeviceBase(DeviceZI):
         await self.set_async(elf_nodes)
         await rw.wait()
         await self.set_async(wf_nodes)
+        await self._apply_near_time_replacements(
+            with_pipeliner=rt_execution_info.with_pipeliner
+        )
+
+    async def _apply_near_time_replacements(self, with_pipeliner: bool):
+        """Apply near-time user nodes that were collected since the previous real-time execution."""
+        if with_pipeliner and not self._near_time_artifact_replacement_nodes.is_empty:
+            raise LabOneQControllerException(
+                f"{self.dev_repr}: Cannot apply near-time artifact replacements in pipeliner mode."
+            )
+        await self.set_async(self._near_time_artifact_replacement_nodes)
+        self._near_time_artifact_replacement_nodes.clear()
 
     def prepare_upload_elf(
         self, elf: bytes, awg_index: int, filename: str
@@ -866,6 +823,22 @@ class DeviceBase(DeviceZI):
             filename=filename,
         )
         return nc
+
+    def add_waveform_replacement(
+        self, awg_index: int, wave: WaveformItem, acquisition_type: AcquisitionType
+    ):
+        self._near_time_artifact_replacement_nodes.extend(
+            self.prepare_upload_binary_wave(
+                awg_index=awg_index, wave=wave, acquisition_type=acquisition_type
+            )
+        )
+
+    def add_command_table_replacement(self, awg_index: int, command_table: dict):
+        self._near_time_artifact_replacement_nodes.extend(
+            self.prepare_upload_command_table(
+                awg_index=awg_index, command_table=command_table
+            )
+        )
 
     def prepare_upload_binary_wave(
         self,
@@ -913,11 +886,10 @@ class DeviceBase(DeviceZI):
     def prepare_upload_all_integration_weights(
         self,
         recipe_data: RecipeData,
-        device_uid: str,
         awg_index: int,
         artifacts: ArtifactsCodegen,
         integrator_allocations: list[IntegratorAllocation],
-        kernel_ref: str,
+        kernel_ref: str | None,
     ) -> NodeCollector:
         return NodeCollector()
 
@@ -936,11 +908,12 @@ class DeviceBase(DeviceZI):
     async def apply_initialization(self, recipe_data: RecipeData):
         pass
 
-    async def initialize_oscillators(self):
+    async def initialize_oscillators(self, recipe_data: RecipeData):
         nc = NodeCollector()
+        device_recipe_data = recipe_data.device_settings[self.uid]
         osc_inits = {
             self._make_osc_path(ch, osc.index): osc.frequency
-            for osc in self._allocated_oscs
+            for osc in device_recipe_data.allocated_oscs
             for ch in osc.channels
         }
         for path, freq in osc_inits.items():
@@ -1048,7 +1021,7 @@ class DeviceBase(DeviceZI):
         )
 
     async def setup_one_step_execution(
-        self, recipe_data: RecipeData, with_pipeliner: bool
+        self, recipe_data: RecipeData, nt_step: NtStepKey, with_pipeliner: bool
     ):
         pass
 
@@ -1134,13 +1107,11 @@ class DeviceBase(DeviceZI):
         nt_step: NtStepKey,
         results: ExperimentResults,
     ):
-        rt_execution_info = recipe_data.rt_execution_info
         await _gather(
             *(
                 self._read_one_awg_results(
                     recipe_data,
                     nt_step,
-                    rt_execution_info,
                     results,
                     awg_key,
                     awg_config,
@@ -1154,21 +1125,21 @@ class DeviceBase(DeviceZI):
         self,
         recipe_data: RecipeData,
         nt_step: NtStepKey,
-        rt_execution_info: RtExecutionInfo,
         results: ExperimentResults,
         awg_key: AwgKey,
         awg_config: AwgConfig,
     ):
+        rt_execution_info = recipe_data.rt_execution_info
         if rt_execution_info.acquisition_type == AcquisitionType.RAW:
             assert awg_config.raw_acquire_length is not None
             raw_results = await self.get_raw_data(
-                channel=cast(int, awg_key.awg_index),
+                channel=awg_key.awg_index,
                 acquire_length=awg_config.raw_acquire_length,
                 acquires=awg_config.result_length,
             )
             # Raw data is per physical port, and is the same for all logical signals of the AWG
             for signal in awg_config.acquire_signals:
-                mapping = rt_execution_info.signal_result_map.get(signal, [])
+                mapping = awg_config.signal_result_map.get(signal, [])
                 signal_acquire_length = awg_config.signal_raw_acquire_lengths.get(
                     signal
                 )
@@ -1229,14 +1200,13 @@ class DeviceBase(DeviceZI):
         assert integrator_allocation.awg == awg_key.awg_index
         assert awg_config.result_length is not None, "AWG not producing results"
         raw_readout = await self.get_measurement_data(
-            recipe_data,
-            cast(int, awg_key.awg_index),
+            awg_key.awg_index,
             rt_execution_info,
             integrator_allocation.channels,
             awg_config.result_length,
             effective_averages,
         )
-        mapping = rt_execution_info.signal_result_map.get(signal, [])
+        mapping = awg_config.signal_result_map.get(signal, [])
         unique_handles = set(mapping)
         for handle in unique_handles:
             if handle is None:
@@ -1260,7 +1230,6 @@ class DeviceBase(DeviceZI):
 
     async def get_measurement_data(
         self,
-        recipe_data: RecipeData,
         channel: int,
         rt_execution_info: RtExecutionInfo,
         result_indices: list[int],

@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy import typing as npt
 
-    from laboneq.core.types import CompiledExperiment
     from laboneq.dsl.device.device_setup import DeviceSetup
     from laboneq.dsl.experiment import Experiment
 
@@ -61,14 +60,10 @@ class Results:
             The source experiment. Deprecated.
         device_setup:
             The device setup on which the experiment was run. Deprecated.
-        compiled_experiment:
-            The compiled experiment that was executed. Deprecated.
         acquired_results:
             The acquired results, organized by handle.
         neartime_callback_results:
             Dictionary of the results of near-time callbacks by their name.
-        user_func_results:
-            Alias for neartime_callback_results. Deprecated.
         execution_errors:
             A list of errors that occurred during the execution of the experiment.
             Entries are tuples of:
@@ -79,7 +74,15 @@ class Results:
         pipeline_jobs_timestamps:
             The timestamps of all pipeline jobs, in seconds. Organized by signal, then pipeline job id.
 
-    !!! version-added "Changed in version 2.54.0"
+    !!! version-removed "Removed in version 2.57.0"
+        Removed the `.user_func_results` attribute and argument that were deprecated
+        in version 2.19.0. Use `.neartime_callback_results` instead.
+
+    !!! version-removed "Removed in version 2.55.0"
+        The deprecated `.compiled_experiment` attribute was removed.
+        Track the compiled experiment separately instead.
+
+    !!! version-removed "Removed in version 2.54.0"
         The following deprecated methods for saving and loading were removed:
         - `load`
         - `save`
@@ -89,22 +92,16 @@ class Results:
         The `experiment`, `device_setup` and `compiled_experiment` attributes
         were deprecated in version 2.52.0 and are only populated when
         requested via `Session` or `Session.run`.
-
-    !!! version-changed "Deprecated in version 2.19.0"
-        The `user_func_results` attribute was deprecated in version 2.19.0.
-        Use `neartime_callback_results` instead.
     """
 
     experiment: Experiment = attrs.field(default=None)
     device_setup: DeviceSetup = attrs.field(default=None)
-    compiled_experiment: CompiledExperiment = attrs.field(default=None)
     acquired_results: AcquiredResults = attrs.field(factory=AcquiredResults)
     neartime_callback_results: dict[str, list[Any]] = attrs.field(default=None)
     execution_errors: list[tuple[list[int], str, str]] = attrs.field(factory=list)
     pipeline_jobs_timestamps: dict[str, list[float]] = attrs.field(factory=dict)
 
     # Support for deprecated init parameters:
-    _user_func_results: dict[str, list[Any]] | None = attrs.field(default=None)
     _data: AcquiredResults | None = attrs.field(default=None)
 
     _acquired_results_wrapper: AttributeWrapper | None = attrs.field(
@@ -117,26 +114,12 @@ class Results:
     @classmethod
     def _laboneq_exclude_from_legacy_serializer(cls):
         return [
-            "_user_func_results",
             "_data",
             "_acquired_results_wrapper",
             "_neartime_callbacks_wrapper",
         ]
 
     def __attrs_post_init__(self):
-        if self._user_func_results is not None:
-            if self.neartime_callback_results is None:
-                self.neartime_callback_results = self._user_func_results
-                self._user_func_results = None  # remove duplicate reference
-            elif not self._user_func_results:
-                # allow an empty _user_func_results to be passed to support the
-                # old laboneq serializer.
-                self._user_func_results = None
-            else:
-                raise LabOneQException(
-                    "Results can only be initialized with either 'neartime_callback_results'"
-                    " or 'user_func_results', not both."
-                )
         if self._data is not None:
             if not self.acquired_results:
                 self.acquired_results = self._data
@@ -180,7 +163,6 @@ class Results:
         return self.__class__(
             experiment=copy.deepcopy(self.experiment),
             device_setup=copy.deepcopy(self.device_setup),
-            compiled_experiment=copy.deepcopy(self.compiled_experiment),
             acquired_results=copy.deepcopy(self.acquired_results),
             neartime_callback_results=copy.deepcopy(self.neartime_callback_results),
             execution_errors=copy.deepcopy(self.execution_errors),
@@ -200,21 +182,6 @@ class Results:
 
     def __getitem__(self, key: object) -> AttributeWrapper | ErrorList | object:
         return self._acquired_results_wrapper.__getitem__(key)
-
-    @property
-    @deprecated(
-        "The `.user_func_results` attribute is deprecated. Use"
-        " `.neartime_callback_results` instead.",
-        category=FutureWarning,
-    )
-    def user_func_results(self):
-        """Alias for neartime_callback_results.
-
-        !!! version-changed "Deprecated in version 2.19.0"
-            The `.user_func_results attribute` was deprecated in version 2.19.0.
-            Use `.neartime_callback_results` instead.
-        """
-        return self.neartime_callback_results
 
     @property
     def errors(self) -> ErrorList:

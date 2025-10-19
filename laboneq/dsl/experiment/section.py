@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import attrs
-import warnings
 from typing import TYPE_CHECKING, Any
+
+import attrs
 
 from laboneq._utils import id_generator
 from laboneq.core.exceptions import LabOneQException
@@ -27,6 +27,7 @@ from .delay import Delay
 from .operation import Operation
 from .play_pulse import PlayPulse
 from .reserve import Reserve
+from .reset_oscillator_phase import ResetOscillatorPhase
 from .set_node import SetNode
 
 if TYPE_CHECKING:
@@ -88,12 +89,6 @@ class Section:
             If True, the section boundaries are always rounded to the system grid,
             even if the contained signals would allow for tighter alignment.
             Default: `False`.
-
-    !!! version-changed "Changed in version 2.0.0"
-        Removed `offset` member variable.
-
-    !!! version-changed "Added in version 2.26.0"
-        Added `name` member variable.
     """
 
     # Unique identifier of the section.
@@ -351,6 +346,15 @@ class Section:
             Delay(signal=signal, time=time, precompensation_clear=precompensation_clear)
         )
 
+    def reset_oscillator_phase_(self, signal: str | None = None):
+        """Reset the phase of the oscillator on the given signal.
+
+        Arguments:
+            signal: Unique identifier of the signal whose oscillator
+                    phase should be reset. None resets all signals of the section.
+        """
+        self.add(ResetOscillatorPhase(signal=signal))
+
     def call(self, func_name, **kwargs):
         """Function call.
 
@@ -359,56 +363,6 @@ class Section:
             kwargs (dict): Arguments of the function call.
         """
         self.add(Call(func_name=func_name, **kwargs))
-
-
-@classformatter
-@attrs.define
-class AcquireLoopNt(Section):
-    """Near time acquire loop.
-
-    !!! version-changed "Deprecated in 2.14"
-        Use `.sweep` outside of an `acquire_loop_rt` instead.
-        For example:
-
-        ``` py
-        param = SweepParameter(values=[1, 2, 3])
-        with exp.sweep(param):  # <-- outer near-time sweep
-            with exp.acquire_loop_rt(count=2):  # <-- inner real-time sweep
-                ...
-        ```
-
-    Attributes:
-        averaging_mode (AveragingMode):
-            Averaging method. One of sequential, cyclic or single shot.
-            Default: [AveragingMode.CYCLIC][laboneq.core.types.enums.averaging_mode.AveragingMode].
-        count (int):
-            Number of loops to perform.
-
-    [AcquireLoopNt][laboneq.dsl.experiment.section.AcquireLoopNt] inherits
-    all the attributes of
-    [Section][laboneq.dsl.experiment.section.Section].
-
-    The execution type of [AcquireLoopNt][laboneq.dsl.experiment.section.AcquireLoopNt]
-    sections is always
-    [ExecutionType.NEAR_TIME][laboneq.core.types.enums.execution_type.ExecutionType]
-    and should not be altered.
-    """
-
-    # Averaging method. One of sequential, cyclic and single_shot.
-    averaging_mode: AveragingMode = attrs.field(default=AveragingMode.CYCLIC)
-    # Number of loops.
-    count: int | None = attrs.field(default=None)
-    execution_type: ExecutionType = attrs.field(default=ExecutionType.NEAR_TIME)
-
-    def __attrs_post_init__(self):
-        warnings.warn(
-            "AcquireLoopNt and acquire_loop_nt are deprecated and may be"
-            " removed in a future version of LabOne Q. Use a sweep outside"
-            " of the acquire_loop_rt instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
-        super().__attrs_post_init__()
 
 
 @classformatter
@@ -440,7 +394,7 @@ class AcquireLoopRt(Section):
     all the attributes of
     [Section][laboneq.dsl.experiment.section.Section].
 
-    The execution type of [AcquireLoopRt][laboneq.dsl.experiment.section.AcquireLoopNt]
+    The execution type of [AcquireLoopRt][laboneq.dsl.experiment.section.AcquireLoopRt]
     sections is always
     [ExecutionType.REAL_TIME][laboneq.core.types.enums.execution_type.ExecutionType]
     and should not be altered.
@@ -494,14 +448,10 @@ class Sweep(Section):
     [Sweep][laboneq.dsl.experiment.section.Sweep] inherits
     all the attributes of
     [Section][laboneq.dsl.experiment.section.Section].
-
-    !!! version-changed "Changed in 2.24.0"
-        `parameters` now accepts a single `Parameter` in addition to accepting a list.
-
     """
 
     # Parameters that should be swept.
-    parameters: list[Parameter] = attrs.field(factory=list)
+    parameters: Parameter | list[Parameter] = attrs.field(factory=list)
     # When True, reset all oscillators at the start of every step.
     reset_oscillator_phase: bool = attrs.field(default=False)
     # When larger than 1, split the sweep into N chunks.

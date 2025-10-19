@@ -26,7 +26,8 @@ from laboneq.compiler.common.shfppc_sweeper_config import SHFPPCSweeperConfig
 from laboneq.compiler.experiment_access.experiment_dao import ExperimentDAO
 from laboneq.compiler.scheduler.sampling_rate_tracker import SamplingRateTracker
 from laboneq.compiler.seqc.linker import NeartimeStep, CombinedRTOutputSeqC
-from laboneq.compiler.seqc.measurement_calculator import IntegrationTimes, SignalDelays
+from laboneq.compiler.seqc.measurement_calculator import SignalDelays
+from laboneq.compiler.common.integration_times import IntegrationTimes
 from laboneq.compiler.workflow.on_device_delays import OnDeviceDelayCompensation
 from laboneq.compiler.workflow.precompensation_helpers import (
     precompensation_is_nonzero,
@@ -77,13 +78,23 @@ class RecipeGenerator:
         self._recipe.versions.target_labone = zhinst_version
         self._recipe.versions.laboneq = get_version()
 
-    def add_oscillator_params(self, experiment_dao: ExperimentDAO):
+    def add_oscillator_params(self, awgs: list[AWGInfo], experiment_dao: ExperimentDAO):
         for signal_id in experiment_dao.signals():
             signal_info = experiment_dao.signal_info(signal_id)
             oscillator_info = experiment_dao.signal_oscillator(signal_id)
             if oscillator_info is None:
                 continue
             if oscillator_info.is_hardware:
+                oscs = next(
+                    (
+                        awg.oscs
+                        for awg in awgs
+                        for signal in awg.signals
+                        if signal.id == signal_id
+                    ),
+                    {},
+                )
+
                 if isinstance(oscillator_info.frequency, ParameterInfo):
                     frequency, param = None, oscillator_info.frequency.uid
                 else:
@@ -96,6 +107,9 @@ class RecipeGenerator:
                             device_id=signal_info.device.uid,
                             channel=ch,
                             signal_id=signal_id,
+                            # TODO(2K): remove default 0, ensure all HW oscillators are allocated,
+                            # or error out earlier
+                            allocated_index=oscs.get(oscillator_info.uid, 0),
                             frequency=frequency,
                             param=param,
                         )
@@ -276,23 +290,22 @@ class RecipeGenerator:
     ):
         if output_routers is None:
             output_routers = []
-        else:
-            output_routers = [
-                RoutedOutput(
-                    from_channel=route.from_channel,
-                    amplitude=(
-                        route.amplitude
-                        if not isinstance(route.amplitude, ParameterInfo)
-                        else route.amplitude.uid
-                    ),
-                    phase=(
-                        route.phase
-                        if not isinstance(route.phase, ParameterInfo)
-                        else route.phase.uid
-                    ),
-                )
-                for route in output_routers
-            ]
+        recipe_output_routers = [
+            RoutedOutput(
+                from_channel=route.from_channel,
+                amplitude=(
+                    route.amplitude
+                    if not isinstance(route.amplitude, ParameterInfo)
+                    else route.amplitude.uid
+                ),
+                phase=(
+                    route.phase
+                    if not isinstance(route.phase, ParameterInfo)
+                    else route.phase.uid
+                ),
+            )
+            for route in output_routers
+        ]
 
         if precompensation is not None:
             precomp_dict = {
@@ -331,7 +344,7 @@ class RecipeGenerator:
             scheduler_port_delay=scheduler_port_delay,
             marker_mode=marker_mode,
             amplitude=amplitude,
-            routed_outputs=output_routers,
+            routed_outputs=recipe_output_routers,
             enable_output_mute=enable_output_mute,
         )
         if diagonal is not None and off_diagonal is not None:
@@ -449,7 +462,7 @@ class RecipeGenerator:
         self._recipe.realtime_execution_init.append(
             RealtimeExecutionInit(
                 device_id=nt_step.device_id,
-                awg_id=nt_step.awg_id,
+                awg_index=nt_step.awg_id,
                 program_ref=nt_step.seqc_ref,
                 wave_indices_ref=nt_step.wave_indices_ref,
                 kernel_indices_ref=nt_step.kernel_indices_ref,
@@ -857,7 +870,7 @@ def generate_recipe(
     recipe_generator = RecipeGenerator()
     recipe_generator.from_experiment(experiment_dao, leader_properties, clock_settings)
 
-    recipe_generator.add_oscillator_params(experiment_dao)
+    recipe_generator.add_oscillator_params(awgs, experiment_dao)
 
     for output in calc_outputs(
         experiment_dao,

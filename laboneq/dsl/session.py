@@ -6,12 +6,11 @@ from __future__ import annotations
 import logging
 import warnings
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, Dict, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, NoReturn, Union
 
+from laboneq.data.experiment_results import ExperimentResults
 from numpy import typing as npt
-from typing_extensions import deprecated
 
-from laboneq.controller.protected_session import ProtectedSession
 from laboneq.controller.toolkit_adapter import ToolkitDevices
 from laboneq.core.exceptions import AbortExecution, LabOneQException
 from laboneq.core.types import CompiledExperiment
@@ -57,6 +56,12 @@ class ConnectionState:
 _FLEXIBLE_FEEDBACK_SETTING = "FLEXIBLE_FEEDBACK"
 
 
+def _requires_neartime_callback() -> NoReturn:
+    raise LabOneQException(
+        "This method only works when called from a near-time callback."
+    )
+
+
 class Session:
     """This Session class represents the main endpoint for the user interaction with the QCCS system.
 
@@ -91,7 +96,7 @@ class Session:
         _last_results=None,
         compiled_experiment: CompiledExperiment | None = None,
         experiment: Experiment | None = None,
-        include_results_metadata: bool = True,
+        include_results_metadata: bool = False,
         server_log: bool = False,
     ):
         """Constructor of the session.
@@ -114,12 +119,22 @@ class Session:
                 If specified, set the current experiment.
             include_results_metadata:
                 If True, `Session.run` will return a `Results` object with the deprecated `.experiment`,
-                `.compiled_experiment` and `.device_setup` attributes populated. Otherwise, it will
+                and `.device_setup` attributes populated. Otherwise, it will
                 return a `Results` object with these attributes not populated.
             server_log:
                 If `True`, the data server log - including device firmware logs - will be forwarded to the LabOneQ
                 log under the logger named `server.log.<server_uid>`. Additionally, it will be written to the file
                 `server.log` alongside the regular LabOneQ log, assuming the standard logging configuration is used.
+
+        !!! version-removed "Removed in version 2.57.0"
+            Removed the `register_user_function` method that was deprecated in 2.19.0.
+            Use `register_neartime_callback` instead.
+
+        !!! version-changed "Changed in version 2.55.0"
+            The deprecated `.compiled_experiment` attribute was removed from `Results`. The
+            `include_results_metadata` argument thus no longer populates this attribute on `Results`.
+            Track the compiled experiment separately instead.
+
         !!! version-changed "Changed in version 2.54.0"
             The following deprecated methods for saving and loading were removed:
                 - `load`
@@ -141,10 +156,6 @@ class Session:
 
         !!! version-added "Added in version 2.52.0"
             Added the `include_results_metadata` argument.
-
-        !!! version-changed "Changed in version 2.0"
-            - Removed `pass_v3_to_compiler` argument.
-            - Removed `max_simulation_time` instance variable.
         """
         self._device_setup = device_setup if device_setup else DeviceSetup()
         self._controller: Controller | None = None
@@ -222,25 +233,6 @@ class Session:
             name = func.__name__
         self._neartime_callbacks[name] = func
 
-    @deprecated(
-        "The 'register_user_function' method is deprecated."
-        " Use 'register_neartime_callback' instead.",
-        category=FutureWarning,
-    )
-    def register_user_function(self, func, name: str | None = None):
-        """Registers a near-time callback to be referred from the experiment's `call` operation.
-
-        Args:
-            func (function): Near-time callback that is registered.
-            name (str):     Optional name to use as the argument to experiment's `call` operation to refer to this
-                            function. If not provided, function name will be used.
-
-        !!! version-changed "Deprecated in version 2.19.0"
-            The `register_user_function` method was deprecated in version 2.19.0.
-            Use `register_neartime_callback` instead.
-        """
-        self.register_neartime_callback(func, name)
-
     def connect(
         self,
         do_emulation=False,
@@ -269,10 +261,6 @@ class Session:
                 - Device update is in progress
 
                 It is suggested to keep the versions aligned and up-to-date to avoid any unexpected behaviour.
-
-                !!! version-changed "Changed in version 2.4"
-                    Renamed `ignore_lab_one_version_error` to `ignore_version_mismatch` and include
-                    LabOne and device firmware version compatibility check.
 
             reset_devices (bool): Load the factory preset after connecting for device which support it.
 
@@ -309,6 +297,7 @@ class Session:
             target_setup=target_setup,
             ignore_version_mismatch=ignore_version_mismatch,
             neartime_callbacks=self._neartime_callbacks,
+            parent_session=self,
         )
         controller.connect(
             do_emulation=self._connection_state.emulated,
@@ -398,13 +387,6 @@ class Session:
         Args:
             experiment: Experiment instance that should be compiled.
             compiler_settings: Extra options passed to the compiler.
-
-        !!! version-changed "Changed in version 2.4"
-            Raises error if `Session` is not connected.
-
-        !!! version-changed "Changed in version 2.0"
-            Removed `do_simulation` argument.
-            Use [OutputSimulator][laboneq.simulator.output_simulator.OutputSimulator] instead.
         """
         self._experiment_definition = experiment
         self._compiled_experiment = laboneq_compile(
@@ -438,10 +420,6 @@ class Session:
         If an experiment is specified, the provided experiment is assigned to the
         internal experiment of the session.
 
-        !!! version-changed "Changed in version 2.0"
-            Removed `do_simulation` argument.
-            Use [OutputSimulator][laboneq.simulator.output_simulator.OutputSimulator] instead.
-
         Args:
             experiment: Optional. Experiment instance that should be
                 run. The experiment will be compiled if it has not been yet. If no
@@ -449,7 +427,7 @@ class Session:
                 is used.
             include_results_metadata:
                 If true, return a `Results` object with the deprecated `.experiment`,
-                `.compiled_experiment` and `.device_setup` attributes populated.
+                and `.device_setup` attributes populated.
                 If false, return a `Results` object with these attributes not populated.
                 If None, the setting falls back to that passed to `include_results_metadata`
                 when this session was created.
@@ -458,15 +436,23 @@ class Session:
             results:
                 A `Results` object.
 
+        Raises:
+            LabOneQException:
+                If the session is not connected.
+            LabOneQControllerException:
+                If errors are reported by the controller while executing the experiment.
+
+        !!! version-changed "Changed in version 2.55.0"
+            The deprecated `.compiled_experiment` attribute was removed from `Results`. The
+            `include_results_metadata` argument thus no longer populates this attribute on `Results`.
+            Track the compiled experiment separately instead.
+
         !!! version-changed "Changed in version 2.52.0"
             Replaced the `include_metadata` argument with `include_results_metadata`.
 
-        !!! version-changed "Changed in version 2.51.0"
+        !!! version-added "Added in version 2.51.0"
             Added the `include_metadata` argument to control whether to include experiment and
             device setup in the results.
-
-        !!! version-changed "Changed in version 2.4"
-            Raises error if session is not connected.
         """
         if include_results_metadata is None:
             include_results_metadata = self._include_results_metadata
@@ -481,17 +467,23 @@ class Session:
             raise LabOneQException("No experiment available to run.")
 
         self._last_results = None
+        handle = None
         try:
-            controller.execute_compiled(
-                self.compiled_experiment.scheduled_experiment, ProtectedSession(self)
+            handle = controller.submit_compiled(
+                self.compiled_experiment.scheduled_experiment
             )
+            controller.wait_submission(handle)
+            controller.stop_workers()
         finally:
-            results = controller.results()
+            results = (
+                ExperimentResults()
+                if handle is None
+                else controller.submission_results(handle)
+            )
             results_kwargs: dict[str, Any] = {}
             if include_results_metadata:
                 results_kwargs["experiment"] = self.compiled_experiment.experiment
                 results_kwargs["device_setup"] = self.device_setup
-                results_kwargs["compiled_experiment"] = self.compiled_experiment
             self._last_results = Results(
                 acquired_results=results.acquired_results,
                 neartime_callback_results=results.neartime_callback_results,
@@ -565,7 +557,7 @@ class Session:
                 Replacement pulse, can be a Pulse object or array of values.
                 Needs to have the same length as the pulse it replaces.
         """
-        self._controller.replace_pulse(pulse_uid, pulse_or_array)
+        _requires_neartime_callback()
 
     def replace_phase_increment(
         self,
@@ -583,7 +575,7 @@ class Session:
             new_value: The new replacement value.
 
         """
-        self._controller.replace_phase_increment(parameter_uid, new_value)
+        _requires_neartime_callback()
 
     def get_results(self) -> Results:
         """

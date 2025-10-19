@@ -8,14 +8,15 @@ import logging
 import re
 from collections import defaultdict
 from types import SimpleNamespace
-from typing import Any, Dict, Tuple, TypeVar
+from typing import Dict, Literal, TypeVar
+
 import numpy as np
 
-from laboneq.core.path import LogicalSignalGroups_Path, insert_logical_signal_prefix
 from laboneq._utils import UIDReference, ensure_list, id_generator
 from laboneq.compiler import DeviceType
 from laboneq.core.exceptions import LabOneQException
-from laboneq.core.types.enums import AveragingMode, PortMode
+from laboneq.core.path import LogicalSignalGroups_Path, insert_logical_signal_prefix
+from laboneq.core.types.enums import AveragingMode
 from laboneq.core.types.enums import acquisition_type as acq_type
 from laboneq.core.types.units import Quantity
 from laboneq.data.calibration import (
@@ -23,6 +24,7 @@ from laboneq.data.calibration import (
     MixerCalibration,
     ModulationType,
     Oscillator,
+    PortMode,
     Precompensation,
     SignalCalibration,
 )
@@ -30,6 +32,8 @@ from laboneq.data.compilation_job import (
     AcquireInfo,
     AmplifierPumpInfo,
     ChunkingInfo,
+    DeviceInfo,
+    DeviceInfoType,
     ExperimentInfo,
     Marker,
     MixerCalibrationInfo,
@@ -37,14 +41,13 @@ from laboneq.data.compilation_job import (
     OutputRoute,
     ParameterInfo,
     PrecompensationInfo,
+    PRNGInfo,
     PulseDef,
     SectionInfo,
     SectionSignalPulse,
     SignalInfo,
     SignalInfoType,
     SignalRange,
-    PRNGInfo,
-    DeviceInfo,
 )
 from laboneq.data.experiment_description import (
     Acquire,
@@ -53,12 +56,14 @@ from laboneq.data.experiment_description import (
     ExecutionType,
     Experiment,
     ExperimentSignal,
+    Match,
+    Operation,
+    PrngLoop,
     Reserve,
+    ResetOscillatorPhase,
     Section,
     SignalOperation,
     Sweep,
-    PrngLoop,
-    Match,
 )
 from laboneq.data.parameter import LinearSweepParameter, Parameter, SweepParameter
 from laboneq.data.setup_description import (
@@ -115,9 +120,12 @@ class ExperimentInfoBuilder:
 
         self._validate_chunked_sweep()
 
-        section_uid_map = {}
+        section_uid_map: dict[str, Section] = {}
+        for section in self._experiment.sections:
+            self._collect_section_uids(section, section_uid_map)
+        visit_count = {k: 0 for k in section_uid_map}
         root_sections = [
-            self._walk_sections(section, section_uid_map)
+            self._walk_sections(section, section_uid_map, visit_count)
             for section in self._experiment.sections
         ]
 
@@ -554,20 +562,37 @@ class ExperimentInfoBuilder:
             return UIDReference(val_or_param_info.uid)
         return val_or_param_info
 
-    def _walk_sections(
+    def _collect_section_uids(
         self,
         section: Section,
-        section_uid_map: Dict[str, Tuple[Any, int]],
-    ) -> SectionInfo:
+        section_uid_map: dict[str, Section],
+    ):
+        """Collects section UIDs and checks for duplicates.
+
+        Args:
+            section: The section to walk through.
+            section_uid_map: A map of section UIDs to their corresponding SectionInfo and index.
+
+        Raises:
+            LabOneQException: If a duplicate section UID is found.
+        """
         assert section.uid is not None
-        if (
-            section.uid in section_uid_map
-            and section != section_uid_map[section.uid][0]
-        ):
+        if section.uid in section_uid_map and section != section_uid_map[section.uid]:
             raise LabOneQException(
                 f"Duplicate section uid '{section.uid}' found in experiment"
             )
+        section_uid_map[section.uid] = section
+        for child_section in section.children:
+            if not isinstance(child_section, Section):
+                continue
+            self._collect_section_uids(child_section, section_uid_map)
 
+    def _walk_sections(
+        self,
+        section: Section,
+        section_uid_map: Dict[str, Section],
+        visit_count: dict[str, int],
+    ) -> SectionInfo:
         if hasattr(section, "acquisition_type"):
             if self._acquisition_type is not None:
                 raise LabOneQException(
@@ -578,19 +603,79 @@ class ExperimentInfoBuilder:
         section_info = self._load_section(
             section,
             self._acquisition_type,
-            section_uid_map,
+            visit_count,
         )
 
-        for child_section in section.children:
-            if not isinstance(child_section, Section):
+        if any(
+            isinstance(op, ResetOscillatorPhase) and op.signal is None
+            for op in section.children
+        ):
+            self._split_phase_reset_sections(
+                section_info, section, section_uid_map, visit_count
+            )
+        else:
+            for child_section in section.children:
+                if isinstance(child_section, Section):
+                    section_info.children.append(
+                        self._walk_sections(
+                            child_section,
+                            section_uid_map,
+                            visit_count,
+                        )
+                    )
+        return section_info
+
+    def _split_phase_reset_sections(
+        self,
+        section_info: SectionInfo,
+        section: Section,
+        section_uid_map: dict[str, Section],
+        visit_count: dict[str, int],
+    ):
+        sections_ops: list[list[Operation | Section] | Literal["reset"]] = [[]]
+        for child in section.children:
+            assert isinstance(child, Operation)
+            if isinstance(child, ResetOscillatorPhase) and child.signal is None:
+                sections_ops.append("reset")
+                sections_ops.append([])
+            else:
+                sections_ops[-1].append(child)
+        section.children.clear()
+        signals = set(
+            op.signal
+            for ops in sections_ops
+            if ops != "reset"
+            for op in ops
+            if isinstance(op, SignalOperation) and op.signal is not None
+        )
+        for section_ops in sections_ops:
+            if len(section_ops) == 0:
                 continue
+            i = 0
+            new_section_uid = f"{section_info.uid}_reset_phase_{i}"
+            while new_section_uid in section_uid_map:
+                i += 1
+                new_section_uid = f"{section_info.uid}_reset_phase_{i}"
+            new_section = Section(
+                uid=new_section_uid,
+                alignment=section.alignment,
+            )
+
+            if section_ops != "reset":
+                new_section.children = section_ops
+            for signal in signals:
+                new_section.children.append(Reserve(signal=signal))
+            section_uid_map[new_section_uid] = new_section
+            visit_count[new_section_uid] = 0
             section_info.children.append(
-                self._walk_sections(
-                    child_section,
-                    section_uid_map,
+                self._load_section(
+                    new_section,
+                    self._acquisition_type,
+                    visit_count,
                 )
             )
-        return section_info
+            if section_ops == "reset":
+                section_info.children[-1].reset_oscillator_phase = True
 
     def _load_markers(self, operation):
         markers_raw = getattr(operation, "marker", None) or {}
@@ -637,6 +722,20 @@ class ExperimentInfoBuilder:
                 section.signals.append(signal_info)
             return
         if isinstance(operation, Reserve):
+            if signal_info not in section.signals:
+                section.signals.append(signal_info)
+            return
+        if isinstance(operation, ResetOscillatorPhase):
+            if signal_info.type == SignalInfoType.RF:
+                _logger.warning(
+                    "Resetting the phase of RF signal '%s' in section '%s' is not supported yet.",
+                    signal_info.uid,
+                    section.uid,
+                )
+                return
+            section.pulses.append(
+                SectionSignalPulse(signal=signal_info, reset_oscillator_phase=True)
+            )
             if signal_info not in section.signals:
                 section.signals.append(signal_info)
             return
@@ -823,6 +922,7 @@ class ExperimentInfoBuilder:
         for operation in section.children:
             if not isinstance(operation, SignalOperation):
                 continue
+            assert operation.signal is not None
             signal_info = self._signal_infos[operation.signal]
             self._load_ssp(
                 operation,
@@ -831,20 +931,27 @@ class ExperimentInfoBuilder:
                 acquisition_type,
                 section_info,
             )
+        for trigger_signal in section.trigger:
+            try:
+                signal_info = self._signal_infos[trigger_signal]
+            except KeyError as e:
+                raise LabOneQException(
+                    f"Trigger on section {section.uid} played on signal"
+                    f" {trigger_signal} not present in experiment."
+                    f" Available signal(s) are {', '.join(self._signal_infos)}."
+                ) from e
+            if signal_info not in section_info.signals:
+                section_info.signals.append(signal_info)
 
     def _load_section(
         self,
         section: Section,
         exp_acquisition_type,
-        section_uid_map: Dict[str, Tuple[Any, int]],
+        visit_count: dict[str, int],
     ) -> SectionInfo:
-        if section.uid not in section_uid_map:
-            section_uid_map[section.uid] = (section, 0)
-            instance_id = section.uid
-        else:
-            visit_count = section_uid_map[section.uid][1] + 1
-            instance_id = f"{section.uid}_{visit_count}"
-            section_uid_map[section.uid] = (section, visit_count)
+        vc = visit_count[section.uid]
+        instance_id = section.uid + (f"_{vc}" if vc > 0 else "")
+        visit_count[section.uid] += 1
 
         count = None
 
@@ -1265,6 +1372,12 @@ class ExperimentInfoBuilder:
             ).is_qa_device
             if is_qa_device:
                 osc.is_hardware = acq_type.is_spectroscopy(self._acquisition_type)
+            elif (
+                signal.type is SignalInfoType.RF
+                and signal.device.device_type is DeviceInfoType.HDAWG
+            ):
+                # for HDAWG RF signals SW modulation tends to be more useful
+                osc.is_hardware = False
             else:
                 osc.is_hardware = True
 

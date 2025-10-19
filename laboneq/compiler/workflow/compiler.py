@@ -15,9 +15,7 @@ from laboneq.compiler.common.compiler_settings import TINYSAMPLE
 from laboneq.compiler.feedback_router.feedback_router import (
     FeedbackRegisterLayout,
     calculate_feedback_register_layout,
-    assign_feedback_registers,
 )
-from laboneq.compiler.recipe import generate_recipe_combined
 from laboneq.compiler.common import compiler_settings
 from laboneq.compiler.common.awg_info import AWGInfo, AwgKey
 from laboneq.compiler.common.awg_signal_type import AWGSignalType
@@ -28,6 +26,11 @@ from laboneq.compiler.common.trigger_mode import TriggerMode
 from laboneq.compiler.experiment_access.experiment_dao import ExperimentDAO
 from laboneq.compiler.scheduler.sampling_rate_tracker import SamplingRateTracker
 from laboneq.compiler.scheduler.scheduler import Scheduler
+from laboneq.compiler.workflow.compiler_hooks import (
+    GenerateRecipeArgs,
+    all_compiler_hooks,
+    get_compiler_hooks,
+)
 from laboneq.compiler.workflow.neartime_execution import (
     NtCompilerExecutor,
     legacy_execution_program,
@@ -64,21 +67,12 @@ import laboneq.compiler.workflow.reporter  # noqa: F401
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from laboneq.compiler.workflow.on_device_delays import OnDeviceDelayCompensation
 
 
-AWGMapping = dict[AwgKey, AWGInfo]
+AWGMapping = list[AWGInfo]
 
 _logger = logging.getLogger(__name__)
-
-_registered_awg_calculation_hooks: list[Callable[[ExperimentDAO], AWGMapping]] = []
-
-
-def register_awg_calculation_hook(hook):
-    if hook not in _registered_awg_calculation_hooks:
-        _registered_awg_calculation_hooks.append(hook)
-    return hook
 
 
 def _divisors(n: int) -> list[int]:
@@ -193,9 +187,8 @@ def _allocate_oscillators(awg: AWGInfo, dao: ExperimentDAO):
     awg.oscs = {k: v[0] for k, v in awg_osc_map.items()}
 
 
-@register_awg_calculation_hook
-def _calc_awgs(dao: ExperimentDAO):
-    awgs: AWGMapping = {}
+def calc_awgs(dao: ExperimentDAO) -> AWGMapping:
+    awgs: dict[AwgKey, AWGInfo] = {}
     signals_by_channel_and_awg: dict[
         tuple[str, int, int], dict[str, set[str] | AWGInfo]
     ] = {}
@@ -252,7 +245,7 @@ def _calc_awgs(dao: ExperimentDAO):
         _verify_rf_signal_delays(awg, dao)
         _allocate_oscillators(awg, dao)
 
-    return awgs
+    return list(awgs.values())
 
 
 def calc_awg_number(channel, device_type: DeviceType):
@@ -406,9 +399,9 @@ class Compiler:
         self._clock_settings: dict[str, Any] = {}
         self._shfqa_generator_allocation: dict[str, _ShfqaGeneratorAllocation] = {}
         self._integration_unit_allocation: dict[str, IntegrationUnitAllocation] = {}
-        self._awgs: AWGMapping = {}
+        self._awgs: AWGMapping = []
         self._delays_by_signal: dict[str, OnDeviceDelayCompensation] = {}
-        self._precompensations: dict[str, PrecompensationInfo] | None = None
+        self._precompensations: dict[str, PrecompensationInfo] = {}
         self._signal_objects: dict[str, SignalObj] = {}
         self._feedback_register_layout: FeedbackRegisterLayout = {}
         self._has_uhfqa: bool = False
@@ -622,6 +615,7 @@ class Compiler:
                 msg = (
                     "Compilation error - resource limitation exceeded.\n"
                     "To circumvent this, try one or more of the following:\n"
+                    "- Double check the integrity of your experiment (look for unexpectedly long pulses, large number of sweep steps, etc.)\n"
                     "- Reduce the number of sweep steps\n"
                     "- Reduce the number of variations in the pulses that are being played\n"
                     "- Enable chunking for a sweep\n"
@@ -655,7 +649,7 @@ class Compiler:
                             "Automatic chunking was not able to find a chunk count to circumvent resource limitations.\n"
                             "This means that one iteration of a sweep is too large and cannot be executed.\n"
                             "To circumvent this, try one or more of the following:\n"
-                            "- Chunking another sweep\n"
+                            "- Chunking another sweep (e.g. in case of nested sweeps, enable chunking for the inner one)\n"
                             "- Find ways suitable for your use case to reduce the size of the program in one iteration\n"
                         )
                         raise LabOneQException(msg) from err
@@ -664,15 +658,11 @@ class Compiler:
                         candidates=divisors,
                     )
 
-        assign_feedback_registers(
-            combined_compiler_output=self._combined_compiler_output
-        )
-
     @staticmethod
-    def _calc_awgs(dao: ExperimentDAO):
-        d = {}
-        for hook in _registered_awg_calculation_hooks:
-            d.update(hook(dao))
+    def _calc_awgs(dao: ExperimentDAO) -> AWGMapping:
+        d: AWGMapping = []
+        for compiler_hooks in all_compiler_hooks():
+            d.extend(compiler_hooks.calc_awgs(dao))
         return d
 
     def _adjust_signals_for_on_device_delays(
@@ -722,9 +712,7 @@ class Compiler:
         delay_measure_acquire: dict[AwgKey, DelayInfo] = {}
 
         awgs_by_signal_id = {
-            signal_id: awg
-            for awg in self._awgs.values()
-            for signal_id, _ in awg.signal_channels
+            signal_id: awg for awg in self._awgs for signal_id, _ in awg.signal_channels
         }
 
         for signal_id in self._experiment_dao.signals():
@@ -887,19 +875,28 @@ class Compiler:
         self._analyze_setup(self._experiment_dao)
         self._process_experiment()
 
-        awgs: list[AWGInfo] = sorted(self._awgs.values(), key=lambda awg: awg.key)
+        awgs: list[AWGInfo] = sorted(self._awgs, key=lambda awg: awg.key)
 
-        self._recipe = generate_recipe_combined(
-            awgs,
-            self._experiment_dao,
-            self._leader_properties,
-            self._clock_settings,
-            self._sampling_rate_tracker,
-            self._integration_unit_allocation,
-            self._delays_by_signal,
-            self._precompensations,
-            self._combined_compiler_output,
+        device_class, combined_output = (
+            self._combined_compiler_output.get_first_combined_output()
         )
+        if combined_output is None:
+            self._recipe = Recipe()
+        else:
+            generate_recipe_args = GenerateRecipeArgs(
+                awgs=awgs,
+                experiment_dao=self._experiment_dao,
+                leader_properties=self._leader_properties,
+                clock_settings=self._clock_settings,
+                sampling_rate_tracker=self._sampling_rate_tracker,
+                integration_unit_allocation=self._integration_unit_allocation,
+                delays_by_signal=self._delays_by_signal,
+                precompensations=self._precompensations,
+                combined_compiler_output=combined_output,
+            )
+            self._recipe = get_compiler_hooks(device_class).generate_recipe(
+                generate_recipe_args
+            )
 
         retval = self.compiler_output()
 

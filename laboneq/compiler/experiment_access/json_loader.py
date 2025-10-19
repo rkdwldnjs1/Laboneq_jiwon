@@ -220,7 +220,9 @@ class JsonLoader(LoaderBase):
         section_reuse_counter = {}
 
         sections_to_process = deque((s, None) for s in self._root_sections)
-
+        # None of the legacy experiments use match, so we add an arbitrary handle
+        # for acquisitions as the new API requires handle to be present.
+        placeholder_acquisition_handles = {}
         while len(sections_to_process) > 0:
             section_name, parent_instance = sections_to_process.pop()
             if section_name in section_reuse_counter:
@@ -432,8 +434,16 @@ class JsonLoader(LoaderBase):
                             acquire_params = None
                             signal_type = self._signals[signal_id].type.value
                             if signal_type == "integration":
+                                if pulse_ref.get("readout_handle") is None:
+                                    handle = placeholder_acquisition_handles.get(
+                                        signal_id,
+                                        f"placeholder{len(placeholder_acquisition_handles)}",
+                                    )
+                                    placeholder_acquisition_handles[signal_id] = handle
+                                else:
+                                    handle = pulse_ref["readout_handle"]
                                 acquire_params = AcquireInfo(
-                                    handle=pulse_ref.get("readout_handle"),
+                                    handle=handle,
                                     acquisition_type=getattr(
                                         self.acquisition_type, "value", None
                                     ),
@@ -464,21 +474,38 @@ class JsonLoader(LoaderBase):
                                     )
                                 )
                                 self.add_signal_marker(signal_id, k)
-
+                            # Separate 'offset' into a delay
+                            if pulse_offset is not None:
+                                b = SectionSignalPulse(
+                                    signal=self._signals[signal_id],
+                                    pulse=None,
+                                    length=pulse_offset,
+                                    precompensation_clear=precompensation_clear,
+                                    play_pulse_parameters={},
+                                    pulse_pulse_parameters={},
+                                )
+                                self.add_section_signal_pulse(instance_id, signal_id, b)
+                            if (
+                                pulse_id is None
+                                and resulting_pulse_instance_length is None
+                                # Pulse increment has no length nor pulse
+                                and pulse_increment is None
+                            ):
+                                continue
                             new_ssp = SectionSignalPulse(
                                 pulse=self._pulses[pulse_id]
                                 if pulse_id is not None
                                 else None,
                                 signal=self._signals[signal_id],
-                                offset=pulse_offset,
+                                offset=None,
                                 amplitude=pulse_amplitude,
                                 length=resulting_pulse_instance_length,
                                 acquire_params=acquire_params,
                                 phase=pulse_phase,
                                 increment_oscillator_phase=pulse_increment,
                                 set_oscillator_phase=pulse_set_oscillator_phase,
-                                play_pulse_parameters=operation_pulse_parameters,
-                                pulse_pulse_parameters=pulse_parameters,
+                                play_pulse_parameters=operation_pulse_parameters or {},
+                                pulse_pulse_parameters=pulse_parameters or {},
                                 precompensation_clear=precompensation_clear,
                                 markers=markers,
                                 pulse_group=pulse_group,

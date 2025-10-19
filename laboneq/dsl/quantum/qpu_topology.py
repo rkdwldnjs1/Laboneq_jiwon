@@ -7,6 +7,7 @@ import itertools
 from typing import TYPE_CHECKING
 
 from collections import Counter
+import matplotlib.pyplot as plt
 import networkx as nx
 
 from laboneq.core.utilities.add_exception_note import add_note
@@ -84,8 +85,7 @@ class QPUTopology:
     edges, e.g. couplers. Connections between nodes are directed.
 
     Arguments:
-        quantum_elements:
-            The quantum elements that make up the QPU.
+        quantum_elements: The quantum elements that make up the QPU.
 
     Each node of the graph contains a single quantum element.
     Edges are identified by an edge tag and a source and target node.
@@ -102,7 +102,7 @@ class QPUTopology:
         self,
         quantum_elements: list[QuantumElement],
     ) -> None:
-        """Initializes the QPU topology graph.
+        """Initialize the QPU topology graph.
 
         Constructs the QPU topology graph from the list of quantum elements at the
         nodes.
@@ -112,6 +112,134 @@ class QPUTopology:
 
         for q in quantum_elements:
             self._add_node(q)
+
+    def __getitem__(
+        self,
+        key: slice
+        | tuple[
+            str | slice, str | QuantumElement | slice, str | QuantumElement | slice
+        ],
+    ) -> TopologyEdge | list[TopologyEdge]:
+        """Return edge(s) in the QPU topology graph.
+
+        The QPU topology edge lookup retrieves edges from the QPU topology graph. The
+        returned value depends on the type of key supplied.
+
+        If the key is a null slice, all the topology edges are returned:
+
+        ```python
+        qpu_topology[:]  # returns all the edges
+        ```
+
+        If the key is a `(tag, source_node, target_node)` tuple, a single topology edge
+        is returned:
+
+        ```python
+        qpu_topology["coupler", "q0", "q1"]  # returns the edge ("coupler", "q0", "q1")
+        ```
+
+        If the key is a `(tag, source_node, target_node)` tuple with null slice
+        elements, a list of matching topology edges is returned:
+
+        ```python
+        qpu_topology[
+            "coupler", "q0", :
+        ]  # returns all outgoing edges from "q0" with tag "coupler"
+        qpu_topology[
+            "coupler", :, "q0"
+        ]  # returns all incoming edges to "q0" with tag "coupler"
+        qpu_topology["coupler", :, :]  # returns all edges with tag "coupler"
+        qpu_topology[:, "q0", "q1"]  # returns all edges from "q0" to "q1"
+        qpu_topology[:, "q0", :]  # returns all outgoing edges from "q0"
+        qpu_topology[:, :, "q0"]  # returns all incoming edges to "q0"
+        qpu_topology[:, :, :]  # returns all the edges
+        ```
+
+        Arguments:
+            key: The key determining the topology edge(s) to retrieve.
+        Returns:
+            The selected topology edge(s).
+        Raises:
+            TypeError: If `key` has an invalid type.
+            KeyError: If non-null slices are passed.
+        """
+
+        if isinstance(key, slice):
+            if key == slice(None):
+                return [edge for edge in self.edges()]
+            else:
+                err = KeyError(key)
+                add_note(err, "Non-null slices are not supported.")
+                raise err
+
+        if isinstance(key, tuple) and len(key) == 3:
+            for element in key:
+                if isinstance(element, slice) and element != slice(None):
+                    err = KeyError(element)
+                    add_note(err, "Non-null slices are not supported.")
+                    raise err
+
+            tag, source_node, target_node = key
+
+            if not isinstance(source_node, str | QuantumElement | slice):
+                raise TypeError(
+                    f"The source node has unexpected type: {type(source_node)}. "
+                    f"Expected type: str | QuantumElement | slice."
+                )
+            if not isinstance(target_node, str | QuantumElement | slice):
+                raise TypeError(
+                    f"The target node has unexpected type: {type(target_node)}. "
+                    f"Expected type: str | QuantumElement | slice."
+                )
+
+            if isinstance(source_node, QuantumElement):
+                source_node = source_node.uid
+            if isinstance(target_node, QuantumElement):
+                target_node = target_node.uid
+
+            if isinstance(tag, str):
+                if isinstance(source_node, str) and isinstance(target_node, str):
+                    return self.get_edge(tag, source_node, target_node)
+                if isinstance(source_node, str) and isinstance(target_node, slice):
+                    return self.get_edges(source_node, tag, outgoing=True)
+                if isinstance(source_node, slice) and isinstance(target_node, str):
+                    return self.get_edges(target_node, tag, incoming=True)
+                if isinstance(source_node, slice) and isinstance(target_node, slice):
+                    return self.get_edges(tag=tag)
+
+            if isinstance(tag, slice):
+                if isinstance(source_node, str) and isinstance(target_node, str):
+                    return self.get_edges(
+                        source_node, other_node=target_node, outgoing=True
+                    )
+                if isinstance(source_node, str) and isinstance(target_node, slice):
+                    return self.get_edges(source_node, outgoing=True)
+                if isinstance(source_node, slice) and isinstance(target_node, str):
+                    return self.get_edges(target_node, incoming=True)
+                if isinstance(source_node, slice) and isinstance(target_node, slice):
+                    return self.get_edges()
+
+            raise TypeError(
+                f"The tag has unexpected type: {type(tag)}. Expected type: str | slice."
+            )
+
+        raise TypeError(
+            f"The edge key has unexpected type: {type(key)}. "
+            f"Expected type: slice | tuple[..., ..., ...]."
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, QPUTopology):
+            return NotImplemented
+        return (
+            nx.algorithms.is_isomorphic(
+                self._graph,
+                other._graph,
+                node_match=lambda node1, node2: node1 == node2,
+                edge_match=lambda edge1, edge2: edge1 == edge2,
+            )
+            and self._node_lookup == other._node_lookup
+        )
 
     def __repr__(self) -> str:
         edge_tags = [t[0] for t in list(self.edge_keys())]
@@ -130,6 +258,24 @@ class QPUTopology:
         """Add a node to the QPU topology graph."""
         self._graph.add_node(quantum_element.uid)
         self._node_lookup[quantum_element.uid] = quantum_element
+
+    def copy(self) -> QPUTopology:
+        """Return a copy of the QPU topology."""
+        quantum_elements = [qe.copy() for qe in self._node_lookup.values()]
+        topology = type(self)(quantum_elements)
+        for edge in self.edges():
+            topology.add_edge(
+                edge.tag,
+                edge.source_node,
+                edge.target_node,
+                parameters=edge.parameters.copy()
+                if edge.parameters is not None
+                else None,
+                quantum_element=edge.quantum_element.uid
+                if edge.quantum_element is not None
+                else None,
+            )
+        return topology
 
     def nodes(self) -> Generator[QuantumElement]:
         """An iterator over the quantum elements (nodes) of the topology graph."""
@@ -162,9 +308,10 @@ class QPUTopology:
 
         Arguments:
             node: The node UID.
-
         Returns:
             The quantum element at the node.
+        Raises:
+            KeyError: If the node UID is not in the topology graph.
         """
         try:
             self._graph.nodes[node]
@@ -197,15 +344,13 @@ class QPUTopology:
             outgoing:
                 If false, exclude outgoing edges from `node`. If true, include
                 outgoing edges.
+        Returns:
+            The list of neighbouring nodes.
 
         !!! note
-
             If `incoming` and `outgoing` are both `None`, all neighbours are returned.
             If only one is `None`, the other takes the sensible default of
             `not` the other.
-
-        Returns:
-            The list of neighbouring nodes.
         """
         if isinstance(node, QuantumElement):
             node = node.uid
@@ -266,6 +411,8 @@ class QPUTopology:
                 or the quantum element object may be provided.
             parameters: The quantum parameters for the edge.
             quantum_element: The quantum element associated to the edge.
+        Raises:
+            TypeError: If `quantum_element` has an invalid type.
 
         !!! warning
             Multiple edges between two quantum elements in a given direction with the
@@ -283,11 +430,17 @@ class QPUTopology:
 
         # check type of quantum_elements
         if quantum_element is not None and not isinstance(quantum_element, str):
-            raise ValueError(
+            raise TypeError(
                 f"The quantum_element argument has an invalid type "
                 f"{type(quantum_element)}. Expected type: "
                 f"QuantumElement | str | None."
             )
+
+        # check nodes are present in QPU
+        if source_node not in self._node_lookup:
+            raise ValueError(f"Source node `{source_node}` is not present in the QPU.")
+        if target_node not in self._node_lookup:
+            raise ValueError(f"Target node `{target_node}` is not present in the QPU.")
 
         # add edge to graph
         edge_params = {
@@ -315,9 +468,11 @@ class QPUTopology:
                 the quantum element object may be provided.
             target_node: The quantum element at the target node. Either the quantum element UID
                 or the quantum element object may be provided.
-
         Returns:
             The edge.
+        Raises:
+            KeyError: If the edge key `(tag, source_node, target_node)` does not exist
+                in the QPU.
         """
         if isinstance(source_node, QuantumElement):
             source_node = source_node.uid
@@ -352,40 +507,50 @@ class QPUTopology:
 
     def get_edges(
         self,
-        node: str | QuantumElement,
+        node: str | QuantumElement | None = None,
         tag: str | None = None,
         *,
         other_node: str | QuantumElement | None = None,
         incoming: bool | None = None,
         outgoing: bool | None = None,
     ) -> list[TopologyEdge]:
-        """Return a list of edges attached to a quantum element node.
+        """Return a list of edges.
 
         Arguments:
             node:
-                The quantum element whose edges to return. May be passed as
+                If specified, filter the edges by `node`. May be passed as
                 either the UID or the `QuantumElement` object.
             tag:
-                If specified, filter the list of edges by tag.
+                If specified, filter the list of edges by `tag`.
             other_node:
                 If specified, filter the list of edges to contain only
-                those connecting `node` and `other_node`.
+                those connecting `node` and `other_node`. Only applicable if `node` is
+                not None.
             incoming:
                 If false, exclude incoming edges to `node`. If true, include
-                incoming edges.
+                incoming edges. Only applicable if `node` is not None.
             outgoing:
                 If false, exclude outgoing edges from `node`. If true, include
-                outgoing edges.
+                outgoing edges. Only applicable if `node` is not None.
+        Returns:
+            The list of edges.
+        Raises:
+            ValueError: If `node` is None and any of `other_node`, `incoming`, or
+                `outgoing` are not None.
 
         !!! note
-
             If `incoming` and `outgoing` are both `None`, all edges are returned.
             If only one is `None`, the other takes the sensible default of
             `not` the other.
-
-        Returns:
-            The list of edges.
         """
+        if node is None and any(
+            arg is not None for arg in [other_node, incoming, outgoing]
+        ):
+            raise ValueError(
+                "The keyword arguments `other_node`, `incoming`, and "
+                "`outgoing` are not allowed if `node` is None."
+            )
+
         if isinstance(node, QuantumElement):
             node = node.uid
         if isinstance(other_node, QuantumElement):
@@ -399,11 +564,14 @@ class QPUTopology:
         elif outgoing is None:
             outgoing = not incoming
 
-        edge_queries = []
-        if outgoing:
-            edge_queries.append(self._graph.out_edges(node, keys=True, data=True))
-        if incoming:
-            edge_queries.append(self._graph.in_edges(node, keys=True, data=True))
+        if node is None:
+            edge_queries = [self._graph.edges(keys=True, data=True)]
+        else:
+            edge_queries = []
+            if outgoing:
+                edge_queries.append(self._graph.out_edges(node, keys=True, data=True))
+            if incoming:
+                edge_queries.append(self._graph.in_edges(node, keys=True, data=True))
 
         desired_edges = []
         for edge_source, edge_target, k, d in itertools.chain(*edge_queries):
@@ -448,6 +616,9 @@ class QPUTopology:
                 the quantum element object may be provided.
             target_node: The quantum element at the target node. Either the quantum element UID
                 or the quantum element object may be provided.
+        Raises:
+            KeyError: If the edge key `(tag, source_node, target_node)` does not exist
+                in the QPU.
         """
         if isinstance(source_node, QuantumElement):
             source_node = source_node.uid
@@ -467,17 +638,62 @@ class QPUTopology:
             )
             raise err from None
 
-    def plot(self, *, ax: Axes | None = None, disconnected: bool = True) -> None:
+    def plot(
+        self,
+        *,
+        figsize: tuple[float, float] | None = None,
+        fixed_pos: dict[str, tuple[float, float]] | None = None,
+        equal_aspect: bool = False,
+        show_tags: bool = True,
+        ax: Axes | None = None,
+        disconnected: bool = False,
+    ) -> None:
         """Plot the QPU topology.
 
-        Plot a simple directed graph of the QPU topology, including: nodes, node labels,
-         edges, edge labels, and directionality. The node labels are the UIDs of the
-         quantum elements at the nodes. The edge labels are the custom edge tags in
-         `get_edge`. The arrows on the graph indicate the directionality.
+        Plot a simple directed graph of the QPU topology, including: nodes, node
+        labels, edges, edge labels, and directionality. The node labels are the UIDs
+        of the quantum elements at the nodes. The edge labels are the custom edge tags
+        in `get_edge`. The arrows on the graph indicate the directionality.
 
         Arguments:
+            figsize: The figure size `(width, height)` in inches.
+            fixed_pos: The dictionary of fixed node positions. The keys of the
+                dictionary are the quantum element UIDs and the values of the
+                dictionary are the relative node coordinates.
+            equal_aspect: Whether to set equal aspect ratio.
+            show_tags: Whether to show edge tags.
             ax: The Matplotlib axes on which to draw the graph.
             disconnected: Whether to plot disconnected nodes.
+
+        By default, the graph is drawn using the networkx spring layout. To customise
+        the graph's appearance, we can specify the figure size, dictionary of fixed
+        node positions, aspect ratio, edge labels, and whether to show disconnected
+        nodes. For example, to plot nine disconnected qubits arranged on a square
+        lattice, omitting edge tags, we can construct the graph as follows:
+
+        ```python
+        fixed_pos = {qpu[i].uid: divmod(i, 3) for i in range(9)}
+        qpu.topology.plot(
+            figsize=(10, 10),
+            fixed_pos=fixed_pos,
+            equal_aspect=True,
+            show_tags=False,
+            disconnected=True,
+        )
+        ```
+
+        !!! note
+            If a strict subset of nodes is at a fixed position, the remaining nodes are
+            distributed according to the networkx spring layout.
+
+        !!! version-changed "Changed in version 2.57.0"
+            Changed the default networkx layout from `planar` to `spring`.
+            Changed the default value of the `disconnected` argument from `True` to
+            `False`.
+
+        !!! version-added "Added in version 2.57.0"
+            Added the `figsize`, `fixed_pos`, `equal_aspect`, and `show_tags` optional
+            keyword arguments, which provide greater control over the plot's appearance.
         """
         nx_graph = self._graph.copy()
 
@@ -492,7 +708,11 @@ class QPUTopology:
             f"arc3,rad={r}" for r in itertools.accumulate([0.15] * max_parallel_edges)
         ]
 
-        pos = nx.planar_layout(nx_graph)
+        if ax is None:
+            _, ax = plt.subplots(figsize=figsize)
+
+        fixed = list(fixed_pos.keys()) if fixed_pos else None
+        pos = nx.spring_layout(nx_graph, pos=fixed_pos, fixed=fixed, seed=1)
         nx.draw_networkx_nodes(nx_graph, pos, **zi_draw_nx_theme("nodes"), ax=ax)
         nx.draw_networkx_labels(nx_graph, pos, **zi_draw_nx_theme("labels"), ax=ax)
         nx.draw_networkx_edges(
@@ -504,8 +724,14 @@ class QPUTopology:
         )
 
         edge_labels = {}
-        for u, v, k in nx_graph.edges(keys=True):
-            edge_labels[(u, v, k)] = k
+        for u, v, k, d in nx_graph.edges(keys=True, data=True):
+            if show_tags:
+                edge_label = (
+                    f"{k}: {d['quantum_element']}" if d["quantum_element"] else k
+                )
+            else:
+                edge_label = f"{d['quantum_element']}" if d["quantum_element"] else ""
+            edge_labels[(u, v, k)] = edge_label
 
         nx.draw_networkx_edge_labels(
             nx_graph,
@@ -515,3 +741,6 @@ class QPUTopology:
             **zi_draw_nx_theme("edge_labels"),
             ax=ax,
         )
+
+        if equal_aspect:
+            ax.set_aspect("equal")

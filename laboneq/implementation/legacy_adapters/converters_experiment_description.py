@@ -9,7 +9,6 @@ from laboneq.core.types.enums.section_alignment import (
     SectionAlignment as SectionAlignmentDSL,
 )
 from laboneq.data.experiment_description import Acquire as AcquireDATA
-from laboneq.data.experiment_description import AcquireLoopNt as AcquireLoopNtDATA
 from laboneq.data.experiment_description import AcquireLoopRt as AcquireLoopRtDATA
 from laboneq.data.experiment_description import AveragingMode as AveragingModeDATA
 from laboneq.data.experiment_description import Call as CallDATA
@@ -20,22 +19,24 @@ from laboneq.data.experiment_description import Experiment as ExperimentDATA
 from laboneq.data.experiment_description import ExperimentSignal as ExperimentSignalDATA
 from laboneq.data.experiment_description import Match as MatchDATA
 from laboneq.data.experiment_description import PlayPulse as PlayPulseDATA
+from laboneq.data.experiment_description import PrngLoop as PRNGLoopDATA
+from laboneq.data.experiment_description import PrngSetup as PRNGSetupDATA
 from laboneq.data.experiment_description import PulseFunctional as PulseFunctionalDATA
 from laboneq.data.experiment_description import (
     PulseSampled as PulseSampledDATA,
 )
 from laboneq.data.experiment_description import RepetitionMode as RepetitionModeDATA
 from laboneq.data.experiment_description import Reserve as ReserveDATA
+from laboneq.data.experiment_description import (
+    ResetOscillatorPhase as ResetOscillatorPhaseDATA,
+)
 from laboneq.data.experiment_description import Section as SectionDATA
 from laboneq.data.experiment_description import SectionAlignment as SectionAlignmentDATA
 from laboneq.data.experiment_description import SetNode as SetDATA
 from laboneq.data.experiment_description import Sweep as SweepDATA
-from laboneq.data.experiment_description import PrngSetup as PRNGSetupDATA
-from laboneq.data.experiment_description import PrngLoop as PRNGLoopDATA
 from laboneq.data.parameter import LinearSweepParameter as LinearSweepParameterDATA
 from laboneq.data.parameter import Parameter as ParameterDATA
 from laboneq.data.parameter import SweepParameter as SweepParameterDATA
-from ...data.prng import PRNGSample as PRNGSampleDATA, PRNG as PRNGDATA
 from laboneq.dsl.experiment.acquire import Acquire as AcquireDSL
 from laboneq.dsl.experiment.call import Call as CallDSL
 from laboneq.dsl.experiment.delay import Delay as DelayDSL
@@ -47,14 +48,16 @@ from laboneq.dsl.experiment.play_pulse import PlayPulse as PlayPulseDSL
 from laboneq.dsl.experiment.pulse import PulseFunctional as PulseFunctionalDSL
 from laboneq.dsl.experiment.pulse import PulseSampled as PulseSampledDSL
 from laboneq.dsl.experiment.reserve import Reserve as ReserveDSL
-from laboneq.dsl.experiment.section import AcquireLoopNt as AcquireLoopNtDSL
+from laboneq.dsl.experiment.reset_oscillator_phase import (
+    ResetOscillatorPhase as ResetOscillatorPhaseDSL,
+)
 from laboneq.dsl.experiment.section import AcquireLoopRt as AcquireLoopRtDSL
 from laboneq.dsl.experiment.section import Case as CaseDSL
 from laboneq.dsl.experiment.section import Match as MatchDSL
+from laboneq.dsl.experiment.section import PRNGLoop as PRNGLoopDSL
+from laboneq.dsl.experiment.section import PRNGSetup as PRNGSetupDSL
 from laboneq.dsl.experiment.section import Section as SectionDSL
 from laboneq.dsl.experiment.section import Sweep as SweepDSL
-from laboneq.dsl.experiment.section import PRNGSetup as PRNGSetupDSL
-from laboneq.dsl.experiment.section import PRNGLoop as PRNGLoopDSL
 from laboneq.dsl.experiment.set_node import SetNode as SetDSL
 from laboneq.dsl.parameter import LinearSweepParameter as LinearSweepParameterDSL
 from laboneq.dsl.parameter import Parameter as ParameterDSL
@@ -63,6 +66,8 @@ from laboneq.dsl.prng import PRNG as PRNGDSL
 from laboneq.dsl.prng import PRNGSample as PRNGSampleDSL
 from laboneq.implementation.legacy_adapters.dynamic_converter import convert_dynamic
 
+from ...data.prng import PRNG as PRNGDATA
+from ...data.prng import PRNGSample as PRNGSampleDATA
 from .calibration_converter import convert_calibration
 from .post_process_experiment_description import post_process
 
@@ -110,25 +115,6 @@ def convert_Acquire(orig: AcquireDSL):
         orig.pulse_parameters, converter_function_directory
     )
     retval.signal = orig.signal
-    return retval
-
-
-def convert_AcquireLoopNt(orig: AcquireLoopNtDSL):
-    if orig is None:
-        return None
-    retval = AcquireLoopNtDATA()
-    retval.alignment = convert_SectionAlignment(orig.alignment)
-    retval.children = convert_dynamic(orig.children, converter_function_directory)
-    retval.execution_type = convert_ExecutionType(orig.execution_type)
-    retval.length = orig.length
-    retval.on_system_grid = orig.on_system_grid
-    retval.play_after = convert_dynamic(orig.play_after, converter_function_directory)
-    retval.trigger = convert_dynamic(orig.trigger, converter_function_directory)
-    retval.uid = orig.uid
-    retval.averaging_mode = convert_AveragingMode(orig.averaging_mode)
-    retval.count = orig.count
-    retval.execution_type = convert_ExecutionType(orig.execution_type)
-    retval.uid = orig.uid
     return retval
 
 
@@ -315,6 +301,14 @@ def convert_Reserve(orig: ReserveDSL):
     return retval
 
 
+def convert_ResetOscillatorPhase(orig: ResetOscillatorPhaseDSL):
+    if orig is None:
+        return None
+    retval = ResetOscillatorPhaseDATA()
+    retval.signal = orig.signal
+    return retval
+
+
 def convert_Section(orig: SectionDSL):
     if orig is None:
         return None
@@ -413,7 +407,6 @@ def convert_PRNGLoop(prng_loop: PRNGLoopDSL):
 
 converter_function_directory = {
     AcquireDSL: convert_Acquire,
-    AcquireLoopNtDSL: convert_AcquireLoopNt,
     AcquireLoopRtDSL: convert_AcquireLoopRt,
     CallDSL: convert_Call,
     CaseDSL: convert_Case,
@@ -431,6 +424,7 @@ converter_function_directory = {
     PulseFunctionalDSL: convert_PulseFunctional,
     PulseSampledDSL: convert_PulseSampled,
     ReserveDSL: convert_Reserve,
+    ResetOscillatorPhaseDSL: convert_ResetOscillatorPhase,
     SectionDSL: convert_Section,
     SetDSL: convert_Set,
     SweepDSL: convert_Sweep,

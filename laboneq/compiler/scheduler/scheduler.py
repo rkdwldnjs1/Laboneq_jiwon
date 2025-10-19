@@ -7,20 +7,10 @@ import copy
 import dataclasses
 import functools
 import itertools
-import logging
 from dataclasses import replace
 from itertools import groupby
 from math import ceil
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    Optional,
-    Set,
-    Tuple,
-    Iterator,
-)
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from laboneq._utils import UIDReference, cached_method
 from laboneq.core.types.enums import AcquisitionType
@@ -94,12 +84,14 @@ from laboneq.data.compilation_job import (
     SectionSignalPulse,
     SignalInfo,
     SignalInfoType,
+    DeviceInfoType,
 )
+from laboneq.laboneq_logging import get_logger
 
 if TYPE_CHECKING:
     from laboneq.compiler.common.signal_obj import SignalObj
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger(__name__)
 
 
 class _ScheduleToIRConverter:
@@ -185,7 +177,7 @@ class _ScheduleToIRConverter:
 class RepetitionInfo:
     section: str
     mode: RepetitionMode
-    time: Optional[float]
+    time: float | None
 
 
 # from more_itertools
@@ -200,7 +192,7 @@ class Scheduler:
         self,
         experiment_dao: ExperimentDAO,
         sampling_rate_tracker: SamplingRateTracker,
-        signal_objects: Dict[str, SignalObj],
+        signal_objects: dict[str, SignalObj],
         settings: CompilerSettings | None = None,
     ):
         self._schedule_data = ScheduleData(
@@ -212,7 +204,7 @@ class Scheduler:
         self._sampling_rate_tracker = sampling_rate_tracker
 
         _, self._system_grid = self.grid(*self._experiment_dao.signals())
-        self._root_schedule: Optional[IntervalSchedule] = None
+        self._root_schedule: IntervalSchedule | None = None
         self._scheduled_sections = {}
         self._max_acquisition_time_per_awg = {}
 
@@ -234,13 +226,6 @@ class Scheduler:
                     section_id, signal_id
                 ):
                     if section_pulse.acquire_params is not None:
-                        is_offset = (
-                            section_pulse.length is None
-                            and section_pulse.pulse is None
-                            and section_pulse.offset is not None
-                        )  # support offset present in legacy dsl experiments
-                        if is_offset:
-                            continue
                         awg = self._schedule_data.signal_objects[signal_id].awg
                         length = get_length(section_pulse, awg)
                         self._max_acquisition_time_per_awg[awg.key] = max(
@@ -248,9 +233,9 @@ class Scheduler:
                             length,
                         )
 
-    def run(self, nt_parameters: Optional[ParameterStore] = None):
+    def run(self, nt_parameters: ParameterStore[str, float] | None = None):
         if nt_parameters is None:
-            nt_parameters = ParameterStore()
+            nt_parameters = ParameterStore[str, float]()
         self._compute_max_acquisition_time_per_awg()
         self._schedule_data.reset()
         self._root_schedule = self._schedule_root(nt_parameters)
@@ -261,8 +246,9 @@ class Scheduler:
             warning_generator(warning_data)
 
     def generate_ir(self):
-        root_ir = None
-        if self._root_schedule is not None:
+        if self._root_schedule is None:
+            root_ir = RootScheduleIR()
+        else:
             root_ir = _ScheduleToIRConverter(
                 acquisition_type=self._experiment_dao.acquisition_type
             ).visit(self._root_schedule)
@@ -470,7 +456,10 @@ class Scheduler:
         ):
             schedule = self._schedule_match(section_info, current_parameters)
         else:  # regular section
-            children_schedules = self._collect_children_schedules(
+            children_schedules = []
+            if section_info.reset_oscillator_phase:
+                children_schedules += self._schedule_phase_reset(section_id)
+            children_schedules += self._collect_children_schedules(
                 section_id, current_parameters
             )
             schedule = self._schedule_children(
@@ -488,8 +477,8 @@ class Scheduler:
         return schedule
 
     def _swept_oscillators(
-        self, sweep_parameters: Set[str], signals: Set[str]
-    ) -> Dict[str, SweptOscillator]:
+        self, sweep_parameters: set[str], signals: set[str]
+    ) -> dict[str, SweptOscillator]:
         """Collect all oscillators with a frequency swept by one of the
         given parameters, and that modulate one of the given signals. The keys of the
         returned dict are the parameter names."""
@@ -622,7 +611,7 @@ class Scheduler:
 
     def _schedule_oscillator_frequency_step(
         self,
-        swept_oscillators: Dict[str, SweptOscillator],
+        swept_oscillators: dict[str, SweptOscillator],
         global_iteration: int,
         local_iteration: int,
         sweep_parameters: list[ParameterInfo],
@@ -672,39 +661,63 @@ class Scheduler:
             iteration=local_iteration,
         )
 
-    @cached_method(8)
     def _schedule_phase_reset(
         self,
-        section_id: str,
+        section_id: str | None = None,
+        signal_to_reset: SignalInfo | None = None,
     ) -> list[PhaseResetSchedule]:
-        section_info = self._experiment_dao.section_info(section_id)
-        hw_osc_reset_signals = set()
-        grid = 1
-        if section_info.reset_oscillator_phase:
-            for signal in self._experiment_dao.section_signals_with_children(
-                section_id
-            ):
-                osc_info = self._experiment_dao.signal_oscillator(signal)
-                if osc_info is not None and osc_info.is_hardware:
-                    hw_osc_reset_signals.add(signal)
-
-        reset_sw_oscillators = section_info.reset_oscillator_phase or (
-            section_info.execution_type == "hardware"
-            and section_info.averaging_mode is not None
+        assert (section_id is None) != (signal_to_reset is None), (
+            "Internal error: Either section_id or signal must be provided"
         )
+
+        hw_osc_reset_candidates: set[str] = set()
+        sw_signals: list[str] = []
+
+        def is_hw_modulated(signal_id: str) -> bool:
+            osc_info = self._experiment_dao.signal_oscillator(signal_id)
+            return osc_info is not None and osc_info.is_hardware
+
+        if section_id:
+            # Reset the oscillators for a sweep/realtime acquire loop
+            section_info = self._experiment_dao.section_info(section_id)
+            if section_info.reset_oscillator_phase:
+                hw_osc_reset_candidates.update(
+                    signal
+                    for signal in self._experiment_dao.section_signals_with_children(
+                        section_id
+                    )
+                )
+            reset_sw_oscillators = section_info.reset_oscillator_phase or (
+                section_info.execution_type == "hardware"
+                and section_info.averaging_mode is not None
+            )
+            if reset_sw_oscillators:
+                sw_signals = list(
+                    self._experiment_dao.section_signals_with_children(section_id)
+                )
+        else:
+            # Reset the oscillators on demand at arbitrary points in the schedule
+            if signal_to_reset.type == SignalInfoType.RF:
+                return []
+            reset_sw_oscillators = True
+            hw_osc_reset_candidates = {signal_to_reset.uid}
+            sw_signals = [signal_to_reset.uid]
+
+        hw_osc_reset_signals = {
+            signal for signal in hw_osc_reset_candidates if is_hw_modulated(signal)
+        }
 
         if not reset_sw_oscillators and len(hw_osc_reset_signals) == 0:
             return []
 
+        grid = 1
         length = 0
-        hw_osc_devices = {}
+        hw_osc_devices: set[str] = set()
         for signal in hw_osc_reset_signals:
             device = self._experiment_dao.device_from_signal(signal)
             device_type = DeviceType.from_device_info_type(device.device_type)
-            if not device_type.supports_reset_osc_phase:
-                continue
             duration = round(device_type.reset_osc_duration / TINYSAMPLE)
-            hw_osc_devices[device.uid] = duration
+            hw_osc_devices.add(device.uid)
             length = max(length, duration)
             grid = lcm(grid, self._system_grid)
             if device_type.lo_frequency_granularity is not None:
@@ -714,19 +727,22 @@ class Scheduler:
                 df = device_type.lo_frequency_granularity
                 lo_granularity_tinysamples = round(1 / df / TINYSAMPLE)
                 grid = lcm(grid, lo_granularity_tinysamples)
-                _logger.info(
-                    f"Phase reset in section '{section_id}' has extended the section's "
-                    f"timing grid to {grid * TINYSAMPLE * 1e9:.2f} ns, so to be "
-                    f"commensurate with the local oscillator."
+                _logger.diagnostic(
+                    "Phase reset in section '{%s}' has extended the section's "
+                    "timing grid to %.2f ns, so to be "
+                    "commensurate with the local oscillator.",
+                    section_id,
+                    grid * TINYSAMPLE * 1e9,
+                )
+            if signal_to_reset is not None and device_type.reset_osc_duration > 0:
+                _logger.diagnostic(
+                    "An additional delay of %.2f ns has "
+                    "been added to signal '%s' to wait for the phase reset.",
+                    device_type.reset_osc_duration * 1e9,
+                    signal,
                 )
 
-        hw_osc_devices = list(hw_osc_devices)
         length = ceil_to_grid(length, grid)
-
-        if reset_sw_oscillators:
-            sw_signals = self._experiment_dao.section_signals_with_children(section_id)
-        else:
-            sw_signals = ()
 
         return [
             PhaseResetSchedule(
@@ -734,7 +750,7 @@ class Scheduler:
                 length=length,
                 signals={*hw_osc_reset_signals, *sw_signals},
                 section=section_id,
-                hw_osc_devices=hw_osc_devices,
+                hw_osc_devices=list(hw_osc_devices),
                 reset_sw_oscillators=reset_sw_oscillators,
             )
         ]
@@ -809,14 +825,16 @@ class Scheduler:
         local_iteration: int,
         global_iteration: int,
         sweep_parameters: list[ParameterInfo],
-        swept_hw_oscillators: Dict[str, SweptOscillator],
+        swept_hw_oscillators: dict[str, SweptOscillator],
     ) -> LoopIterationPreambleSchedule:
         section_info = self._experiment_dao.section_info(section_id)
 
         grid = 1
 
         # Deepcopy here because of caching
-        osc_phase_resets = copy.deepcopy(self._schedule_phase_reset(section_id))
+        osc_phase_resets = copy.deepcopy(
+            self._schedule_phase_reset(section_id=section_id)
+        )
 
         if len(swept_hw_oscillators):
             osc_sweep = [
@@ -857,7 +875,7 @@ class Scheduler:
         num_repeats: int,
         all_parameters: ParameterStore[str, float],
         sweep_parameters: list[ParameterInfo],
-        swept_oscillators: Dict[str, SweptOscillator],
+        swept_oscillators: dict[str, SweptOscillator],
     ) -> LoopIterationSchedule:
         """Schedule a single iteration of a loop.
 
@@ -967,6 +985,9 @@ class Scheduler:
         section: str,
         current_parameters: ParameterStore[str, float],
     ) -> PulseSchedule:
+        assert pulse.offset is None, (
+            "`SectionSignalPulse.offset` not supported in scheduler"
+        )
         # todo: add memoization
         grid = self.signal_grid(pulse.signal.uid)
 
@@ -984,7 +1005,6 @@ class Scheduler:
                     ) from e
             return value, None
 
-        offset, _ = resolve_value_or_parameter("offset", 0.0)
         length, _ = resolve_value_or_parameter("length", None)
         if length is None and (pulse_def := pulse.pulse) is not None:
             if pulse_def.length is not None:
@@ -997,10 +1017,6 @@ class Scheduler:
                     f"'{section}'. Either specify the length at the pulse definition, "
                     f"when playing the pulse, or by specifying the samples."
                 )
-        elif length is None:
-            assert offset is not None
-            length = 0.0
-
         amplitude, amp_param_name = resolve_value_or_parameter("amplitude", 1.0)
         if abs(amplitude) > 1.0 + 1e-9:
             raise LabOneQException(
@@ -1023,7 +1039,7 @@ class Scheduler:
                     f" '{osc.uid}' on signal '{pulse.signal.uid}' is not supported"
                 )
 
-        def resolve_pulse_params(params: Dict[str, Any]):
+        def resolve_pulse_params(params: dict[str, Any]):
             for param, value in params.items():
                 if isinstance(value, UIDReference):
                     try:
@@ -1045,12 +1061,8 @@ class Scheduler:
         if pulse.play_pulse_parameters:
             play_pulse_params = pulse.play_pulse_parameters.copy()
             resolve_pulse_params(play_pulse_params)
-
-        scheduled_length = length + offset
-
+        scheduled_length = length or 0.0
         length_int = round_to_grid(scheduled_length / TINYSAMPLE, grid)
-        offset_int = round_to_grid(offset / TINYSAMPLE, grid)
-
         signal_info = self._experiment_dao.signal_info(pulse.signal.uid)
         is_acquire = signal_info.type == SignalInfoType.INTEGRATION
         markers = pulse.markers
@@ -1068,18 +1080,25 @@ class Scheduler:
             )
 
         # replace length with longest acquire on the current awg
-        if is_acquire and pulse.acquire_params is not None and not length == 0:
+        if is_acquire and not length == 0 and pulse.acquire_params is not None:
             integration_length = length_int
-            length_int = round_to_grid(
-                (
-                    self._max_acquisition_time_per_awg[
-                        self._schedule_data.signal_objects[signal_info.uid].awg.key
-                    ]
-                    + offset
+            if (
+                pulse.acquire_params.acquisition_type != "RAW"
+                or pulse.signal.device.device_type
+                in [
+                    DeviceInfoType.UHFQA,
+                    DeviceInfoType.SHFQA,
+                ]
+            ):
+                length_int = round_to_grid(
+                    (
+                        self._max_acquisition_time_per_awg[
+                            self._schedule_data.signal_objects[signal_info.uid].awg.key
+                        ]
+                    )
+                    / TINYSAMPLE,
+                    grid,
                 )
-                / TINYSAMPLE,
-                grid,
-            )
         else:
             integration_length = None
 
@@ -1092,7 +1111,6 @@ class Scheduler:
             amplitude=amplitude,
             amp_param_name=amp_param_name,
             phase=phase,
-            offset=offset_int,
             set_oscillator_phase=set_oscillator_phase,
             increment_oscillator_phase=increment_oscillator_phase,
             incr_phase_param_name=incr_phase_param_name,
@@ -1113,7 +1131,6 @@ class Scheduler:
     ) -> AcquireGroupSchedule:
         # Take the first one, they all run on the same device
         grid = self.signal_grid(pulses[0].signal.uid)
-        offsets_int = []
         lengths_int = []
         amplitudes = []
         phases = []
@@ -1121,10 +1138,12 @@ class Scheduler:
         pulse_pulse_params = []
 
         for pulse in pulses:
+            assert pulse.offset is None, (
+                "`SectionSignalPulse.offset` not supported in scheduler"
+            )
             pulse_schedule = self._schedule_pulse(pulse, section, current_parameters)
 
             lengths_int.append(pulse_schedule.length)
-            offsets_int.append(pulse_schedule.offset)
             amplitudes.append(pulse_schedule.amplitude)
             phases.append(pulse_schedule.phase)
             pulse_pulse_params.append(pulse_schedule.pulse_pulse_params)
@@ -1134,10 +1153,6 @@ class Scheduler:
             assert not pulse.markers
             assert pulse.set_oscillator_phase is None
             assert pulse.increment_oscillator_phase is None
-
-        assert len(set(offsets_int)) == 1, (
-            f"Cannot schedule pulses with different offsets in the multistate discrimination group in section '{section}'. "
-        )
 
         signal_id = pulses[0].signal.uid
         assert all(p.signal.uid == signal_id for p in pulses[1:])
@@ -1150,7 +1165,6 @@ class Scheduler:
             section=section,
             amplitudes=amplitudes,
             phases=phases,
-            offset=offsets_int[0],
             play_pulse_params=play_pulse_params,
             pulse_pulse_params=pulse_pulse_params,
         )
@@ -1167,10 +1181,10 @@ class Scheduler:
             or section_info.match_sweep_parameter is not None
         )
         handle: str | None = section_info.match_handle
-        user_register: Optional[int] = section_info.match_user_register
+        user_register: int | None = section_info.match_user_register
         prng_sample = section_info.match_prng_sample
         match_sweep_parameter = section_info.match_sweep_parameter
-        local: Optional[bool] = section_info.local
+        local: bool | None = section_info.local
 
         if match_sweep_parameter is not None:
             return self._schedule_static_branch(section_info, current_parameters)
@@ -1256,7 +1270,7 @@ class Scheduler:
     def _schedule_static_branch(
         self,
         section_info: SectionInfo,
-        current_parameters: ParameterStore,
+        current_parameters: ParameterStore[str, float],
     ) -> SectionSchedule:
         match_sweep_parameter = section_info.match_sweep_parameter
         val = current_parameters[match_sweep_parameter.uid]
@@ -1274,7 +1288,7 @@ class Scheduler:
         )
 
     def _schedule_case(
-        self, section_id: str, current_parameters: ParameterStore
+        self, section_id: str, current_parameters: ParameterStore[str, float]
     ) -> CaseSchedule:
         try:
             # todo: do not hash the entire current_parameters dict, but just the param values
@@ -1343,7 +1357,7 @@ class Scheduler:
             for child_section in section_children
         ]
 
-        pulse_schedules = []
+        pulse_schedules: list[IntervalSchedule] = []
         section_signals = self._schedule_data.experiment_dao.section_signals(section_id)
 
         for signal_id in sorted(section_signals):
@@ -1366,6 +1380,11 @@ class Scheduler:
                     )
                 else:
                     for pulse in group_pulses:
+                        if pulse.reset_oscillator_phase:
+                            pulse_schedules += self._schedule_phase_reset(
+                                signal_to_reset=pulse.signal
+                            )
+                            continue
                         pulse_schedules.append(
                             self._schedule_pulse(pulse, section_id, parameters)
                         )
@@ -1392,7 +1411,7 @@ class Scheduler:
         signal_grid = round(1 / (TINYSAMPLE * sample_rate))
         return signal_grid
 
-    def grid(self, *signal_ids: Iterable[str]) -> Tuple[int, int]:
+    def grid(self, *signal_ids: Iterable[str]) -> tuple[int, int]:
         """Compute signal and sequencer grid for the given signals. If multiple signals
         are given, return the LCM of the individual grids."""
 
@@ -1429,7 +1448,7 @@ class Scheduler:
 
     def _compute_trigger_output(
         self, section_info: SectionInfo
-    ) -> Set[Tuple[str, int]]:
+    ) -> set[tuple[str, int]]:
         """Compute the effective trigger signals for the given section.
 
         The return value is a set of `(signal_id, bit_index)` tuples.
@@ -1468,13 +1487,13 @@ class Scheduler:
         return section_trigger_signals
 
     def _resolve_repetition_time(
-        self, root_sections: Tuple[str]
+        self, root_sections: tuple[str]
     ) -> RepetitionInfo | None:
         """Locate the loop section which corresponds to the shot boundary.
 
         This section will be padded to the repetition length."""
 
-        repetition_info: Optional[RepetitionInfo] = None
+        repetition_info: RepetitionInfo | None = None
         for section in self._schedule_data.experiment_dao.sections():
             section_info = self._schedule_data.experiment_dao.section_info(section)
             if (

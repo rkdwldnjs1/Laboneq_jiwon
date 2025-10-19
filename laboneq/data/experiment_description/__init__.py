@@ -33,7 +33,7 @@ class SignalOperation(Operation):
     """Operation on a specific signal."""
 
     #: Unique identifier of the signal for which the operation is executed.
-    signal: str = field(default=None)
+    signal: str | None = field(default=None)
 
 
 @dataclass
@@ -55,7 +55,7 @@ class Section:
     length: float | None = None
     play_after: list[str | Section] = field(default_factory=list)
     children: list[Operation | Section] = field(default_factory=list)
-    trigger: dict = field(default_factory=dict)
+    trigger: dict[str, dict[str, int]] = field(default_factory=dict)
     on_system_grid: bool | None = None
 
 
@@ -65,14 +65,6 @@ class Acquire(SignalOperation):
     kernel: Pulse | list[Pulse] | None = None
     length: float = None
     pulse_parameters: Optional[Any] | list[Optional[Any]] = None
-
-
-@dataclass
-class AcquireLoopNt(Section):
-    uid: str = None
-    averaging_mode: AveragingMode = None
-    count: int = None
-    execution_type: ExecutionType = None
 
 
 @dataclass
@@ -164,6 +156,10 @@ class PulseSampled(Pulse):
 
 @dataclass
 class Reserve(SignalOperation): ...
+
+
+@dataclass
+class ResetOscillatorPhase(SignalOperation): ...
 
 
 @dataclass

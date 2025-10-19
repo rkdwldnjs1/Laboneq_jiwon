@@ -166,6 +166,7 @@ class OscillatorParamModel:
     device_id: str
     channel: int
     signal_id: str
+    allocated_index: int
     frequency: Optional[float]
     param: Optional[str]
     _target_class: ClassVar[Type] = OscillatorParam
@@ -191,8 +192,8 @@ class AcquireLengthModel:
 
 @attrs.define
 class RealtimeExecutionInitModel:
-    device_id: str | None
-    awg_id: int | str
+    device_id: str
+    awg_index: int
     program_ref: str
     nt_step: NtStepKeyModel
     wave_indices_ref: str | None

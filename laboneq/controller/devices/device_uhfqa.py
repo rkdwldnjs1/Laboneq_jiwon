@@ -16,7 +16,6 @@ from laboneq.controller.attribute_value_tracker import (
 from laboneq.controller.devices.async_support import _gather
 from laboneq.controller.devices.device_utils import NodeCollector
 from laboneq.controller.devices.device_zi import (
-    AllocatedOscillator,
     DeviceBase,
     delay_to_rounded_samples,
     RawReadoutData,
@@ -34,14 +33,14 @@ from laboneq.controller.recipe_processor import (
     RtExecutionInfo,
     get_initialization_by_device_uid,
     get_wave,
+    get_weights_info,
 )
-from laboneq.controller.util import LabOneQControllerException
+from laboneq.controller.utilities.exception import LabOneQControllerException
 from laboneq.core.types.enums.acquisition_type import AcquisitionType
 from laboneq.core.types.enums.averaging_mode import AveragingMode
 from laboneq.data.recipe import (
     IO,
     IntegratorAllocation,
-    OscillatorParam,
     TriggeringMode,
 )
 from laboneq.data.scheduled_experiment import ArtifactsCodegen, ScheduledExperiment
@@ -87,17 +86,6 @@ class DeviceUHFQA(DeviceBase):
                         "%s's output port delay should be set to None, not 0",
                         self.dev_repr,
                     )
-
-    def _get_next_osc_index(
-        self,
-        osc_group_oscs: list[AllocatedOscillator],
-        osc_param: OscillatorParam,
-        recipe_data: RecipeData,
-    ) -> int | None:
-        previously_allocated = len(osc_group_oscs)
-        if previously_allocated >= 1:
-            return None
-        return previously_allocated
 
     async def disable_outputs(self, outputs: set[int], invert: bool):
         nc = NodeCollector(base=f"/{self.serial}/")
@@ -333,11 +321,10 @@ class DeviceUHFQA(DeviceBase):
 
         await self.set_async(nc)
 
-    def _collect_prepare_nt_step_nodes(
-        self, attributes: DeviceAttributesView, recipe_data: RecipeData
-    ) -> NodeCollector:
+    async def _set_nt_step_nodes(
+        self, recipe_data: RecipeData, attributes: DeviceAttributesView
+    ):
         nc = NodeCollector(base=f"/{self.serial}/")
-        nc.extend(super()._collect_prepare_nt_step_nodes(attributes, recipe_data))
 
         for ch in range(self._channels):
             [scheduler_port_delay, port_delay], updated = attributes.resolve(
@@ -351,8 +338,7 @@ class DeviceUHFQA(DeviceBase):
 
             measurement_delay = scheduler_port_delay + (port_delay or 0.0)
             measurement_delay_rounded = delay_to_rounded_samples(
-                channel=ch,
-                dev_repr=self.dev_repr,
+                ch_repr=f"{self.dev_repr}:ch{ch}",
                 delay=measurement_delay,
                 sample_frequency_hz=SAMPLE_FREQUENCY_HZ,
                 granularity_samples=DELAY_NODE_GRANULARITY_SAMPLES,
@@ -361,7 +347,7 @@ class DeviceUHFQA(DeviceBase):
 
             nc.add("qas/0/delay", measurement_delay_rounded)
 
-        return nc
+        await self.set_async(nc)
 
     def _choose_wf_collector(
         self, elf_nodes: NodeCollector, wf_nodes: NodeCollector
@@ -465,16 +451,15 @@ class DeviceUHFQA(DeviceBase):
     def prepare_upload_all_integration_weights(
         self,
         recipe_data: RecipeData,
-        device_uid: str,
         awg_index: int,
         artifacts: ArtifactsCodegen,
         integrator_allocations: list[IntegratorAllocation],
-        kernel_ref: str,
+        kernel_ref: str | None,
     ) -> NodeCollector:
         nc = NodeCollector(base=f"/{self.serial}/")
 
-        integration_weights = artifacts.integration_weights.get(kernel_ref, {})
-        for signal_id, weight_names in integration_weights.items():
+        weights_info = get_weights_info(artifacts, kernel_ref)
+        for signal_id, weight_names in weights_info.items():
             integrator_allocation = next(
                 ia for ia in integrator_allocations if ia.signal_id == signal_id
             )
@@ -620,7 +605,6 @@ class DeviceUHFQA(DeviceBase):
 
     async def get_measurement_data(
         self,
-        recipe_data: RecipeData,
         channel: int,
         rt_execution_info: RtExecutionInfo,
         result_indices: list[int],

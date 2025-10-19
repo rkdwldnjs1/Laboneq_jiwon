@@ -80,7 +80,7 @@ class IO:
 
 @dataclass
 class AWG:
-    awg: int | str
+    awg: int
     signal_type: SignalType
     # signal id -> channel (cast to str for compat with json) -> port
     signals: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -127,6 +127,7 @@ class OscillatorParam:
     device_id: str
     channel: int
     signal_id: str
+    allocated_index: int
     frequency: float | None = None
     param: str | None = None
 
@@ -149,8 +150,8 @@ class AcquireLength:
 
 @dataclass
 class RealtimeExecutionInit:
-    device_id: str | None
-    awg_id: int | str
+    device_id: str
+    awg_index: int
     program_ref: str
     nt_step: NtStepKey
     wave_indices_ref: str | None = None

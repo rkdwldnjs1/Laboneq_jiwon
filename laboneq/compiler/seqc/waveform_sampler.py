@@ -7,16 +7,17 @@ import copy
 import logging
 from collections import namedtuple
 from dataclasses import dataclass, field
+from typing import Protocol
 import hashlib
 from laboneq._rust import codegenerator as codegen_rs
 import numpy as np
+import numpy.typing as npt
 from laboneq.compiler.seqc.utils import normalize_phase
 from laboneq.compiler.seqc.wave_compressor import (
     PlayHold,
     PlaySamples,
     compress_wave,
 )
-
 from laboneq.compiler.common.device_type import DeviceType
 from laboneq.core.exceptions import LabOneQException
 from laboneq.core.utilities.pulse_sampler import (
@@ -195,19 +196,24 @@ def convert_mixer_type(mixer_type: codegen_rs.MixerType | None) -> MixerType | N
     return mixer_type
 
 
+class PulseParameters(Protocol):
+    pulse_parameters: dict
+    play_parameters: dict
+    parameters: dict
+
+
 class WaveformSampler:
     """Waveform sampler for generating sampled waveforms from pulse definitions.
 
     `WaveformSampler`s must be unique across different AWGs / devices.
     """
 
-    def __init__(self, pulse_defs: dict[str, PulseDef], pulse_def_params: list[dict]):
+    def __init__(self, pulse_defs: dict[str, PulseDef]):
         # TODO: Ideally both sampling and compression should be standalone functions,
         # but currently they are tightly coupled to the pulse definitions and parameters,
         # which are not yet fully mapped in Rust.
         # This is a temporary solution until the mapping is complete.
         self._pulse_defs: dict[str, PulseDef] = pulse_defs
-        self._pulse_def_params: list[dict] = pulse_def_params
 
     def sample_and_compress(
         self,
@@ -218,6 +224,7 @@ class WaveformSampler:
         device_type: codegen_rs.DeviceType,
         mixer_type: MixerType | None,
         multi_iq_signal=False,
+        pulse_parameters: dict[int, PulseParameters] | None = None,
     ) -> (
         SampledWaveformSignature
         | list[codegen_rs.PlayHold | codegen_rs.PlaySamples]
@@ -235,11 +242,49 @@ class WaveformSampler:
             device_type,
             mixer_type,
             multi_iq_signal,
+            pulse_parameters=pulse_parameters,
         )
         compressed_events = self.compress_waveform(sampled_signature, device_type)
         if compressed_events is None:
             return sampled_signature
         return compressed_events
+
+    def sample_integration_weight(
+        self,
+        pulse_id: str,
+        pulse_parameters: dict,
+        oscillator_frequency: float,
+        signals: set[str],
+        sampling_rate: float,
+        mixer_type: MixerType | None,
+    ) -> tuple[npt.ArrayLike, npt.ArrayLike]:
+        pulse_def = self._pulse_defs.get(pulse_id)
+        mixer_type = convert_mixer_type(mixer_type)
+        samples = pulse_def.samples
+        amplitude: float = pulse_def.amplitude
+        length = pulse_def.length
+        if length is None:
+            length = len(samples) / sampling_rate
+
+        iw_samples = sample_pulse(
+            signal_type="iq",
+            sampling_rate=sampling_rate,
+            length=length,
+            amplitude=amplitude,
+            pulse_function=pulse_def.function,
+            modulation_frequency=oscillator_frequency,
+            samples=samples,
+            mixer_type=mixer_type,
+            pulse_parameters=pulse_parameters,
+        )
+        verify_amplitude_no_clipping(
+            samples_i=iw_samples["samples_i"],
+            samples_q=iw_samples["samples_q"],
+            pulse_id=pulse_def.uid,
+            mixer_type=mixer_type,
+            signals=tuple(signals),
+        )
+        return (iw_samples["samples_i"], iw_samples["samples_q"])
 
     def _sample_waveform(
         self,
@@ -250,8 +295,10 @@ class WaveformSampler:
         device_type: DeviceType,
         mixer_type: MixerType | None,
         multi_iq_signal=False,
+        pulse_parameters: dict[int, PulseParameters] | None = None,
     ) -> SampledWaveformSignature:
         """Sample a single waveform signature."""
+        pulse_parameters = pulse_parameters or {}
         length = waveform.length
         pulses = waveform.pulses
         if length % device_type.sample_multiple != 0:
@@ -288,10 +335,10 @@ class WaveformSampler:
             iq_phase = normalize_phase(iq_phase)
 
             if pulse_part.id_pulse_params is not None:
-                pulse_params = self._pulse_def_params[pulse_part.id_pulse_params]
-                params_pulse_pulse = pulse_params.pulse_params or {}
-                params_pulse_play = pulse_params.play_params or {}
-                params_pulse_combined = pulse_params.combined()
+                pulse_params = pulse_parameters[pulse_part.id_pulse_params]
+                params_pulse_pulse = pulse_params.pulse_parameters or {}
+                params_pulse_play = pulse_params.play_parameters or {}
+                params_pulse_combined = pulse_params.parameters
             else:
                 params_pulse_pulse = {}
                 params_pulse_play = {}
