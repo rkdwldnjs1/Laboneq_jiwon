@@ -402,6 +402,9 @@ def sidebands_pulse(
     amp_l,
     amp_h,
     phase, # in radian
+    is_gauss_rise = False,
+    is_gauss_fall = False,
+    sigma=1 / 3,
     zero_boundaries=False,
     **_,
 ):
@@ -423,7 +426,31 @@ def sidebands_pulse(
     _frequency_l = frequency_l * length/2
     _frequency_h = frequency_h * length/2
 
-    pulse = amp_h*np.exp(-1j*(_frequency_h*x + phase)*2*np.pi) + amp_l*np.exp(1j*(_frequency_l*x + phase)*2*np.pi)
+    pulse = amp_h*np.exp(-1j*(_frequency_h*x*2*np.pi + phase)) + amp_l*np.exp(1j*(_frequency_l*x*2*np.pi + phase))
+
+    if is_gauss_rise:
+        gauss_rise = np.exp(-((x-1)**2) / (2 * sigma**2))
+
+        if zero_boundaries:
+            dt = x[0] - (x[1] - x[0])
+            dt = np.abs(dt)
+            delta = np.exp(-(dt**2) / (2 * sigma**2))
+            gauss_rise -= delta
+            gauss_rise /= 1 - delta
+        
+        pulse *= gauss_rise
+
+    if is_gauss_fall:
+        gauss_fall = np.exp(-((x+1)**2) / (2 * sigma**2))
+
+        if zero_boundaries:
+            dt = x[0] - (x[1] - x[0])
+            dt = np.abs(dt)
+            delta = np.exp(-(dt**2) / (2 * sigma**2))
+            gauss_fall -= delta
+            gauss_fall /= 1 - delta
+
+        pulse *= gauss_fall
 
     return pulse
 

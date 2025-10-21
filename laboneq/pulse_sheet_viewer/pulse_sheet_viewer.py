@@ -235,21 +235,52 @@ def show_pulse_sheet(
             If not interactive: A link to the HTML output if `IPython` is installed, otherwise
             returns the output filename as a string. If interactive: None
     """
+    # timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    # filename = f"{name}_{timestamp}.html"
+    # compiled_experiment = _fill_maybe_missing_information(
+    #     compiled_experiment, max_events_to_publish
+    # )
+    # if not interactive:
+    #     PulseSheetViewer.generate_viewer_html_file(
+    #         compiled_experiment.scheduled_experiment.schedule, name, filename
+    #     )
+    #     try:
+    #         import IPython.display as ipd
+
+    #         return ipd.FileLink(filename)
+    #     except ImportError:
+    #         return filename
+    # else:
+    #     interactive_psv(
+    #         compiled_experiment=compiled_experiment,
+    #         max_simulation_length=max_simulation_length,
+    #     )
+
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     filename = f"{name}_{timestamp}.html"
+
+    # 저장할 폴더 지정
+    pulse_sheet_folder = "pulse_sheet_folder"
+
+    # 폴더가 없으면 생성
+    os.makedirs(pulse_sheet_folder, exist_ok=True)
+
+    # 저장 경로 생성
+    filepath = os.path.join(pulse_sheet_folder, filename)
+
     compiled_experiment = _fill_maybe_missing_information(
         compiled_experiment, max_events_to_publish
     )
+
     if not interactive:
         PulseSheetViewer.generate_viewer_html_file(
-            compiled_experiment.scheduled_experiment.schedule, name, filename
+            compiled_experiment.scheduled_experiment.schedule, name, filepath
         )
         try:
             import IPython.display as ipd
-
-            return ipd.FileLink(filename)
+            return ipd.FileLink(filepath)
         except ImportError:
-            return filename
+            return filepath
     else:
         interactive_psv(
             compiled_experiment=compiled_experiment,
