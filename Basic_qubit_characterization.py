@@ -5,6 +5,7 @@ import numpy as np
 from pathlib import Path
 import time as time_module
 import scipy.optimize
+import os
 
 import sys
 sys.path.append("D:/Software/SHFQC/")
@@ -29,7 +30,7 @@ from laboneq.contrib.example_helpers.randomized_benchmarking_helper import (
     generate_play_rb_pulses,
     make_pauli_gate_map,
 )
-from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
+# from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
 from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect import (
     pulse_update,
 )
@@ -39,7 +40,7 @@ from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect impo
 class Basic_qubit_characterization_experiments(ZI_QCCS):
 
 # In[] Time Domain Measurements
-    
+
     def nopi_pi(self, average_exponent, phase = 0, is_plot_simulation = False):
 
         device_setup = self.device_setup
@@ -88,7 +89,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_nopi.section(uid="measure", play_after="drive"):
                 exp_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
                 exp_nopi.acquire(
-                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function
+                      # can be acquired only there is a measure signal
                 )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_nopi.section(uid="relax_nopi", length=qubits_parameters[component]["reset_delay_length"]):
@@ -126,7 +128,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_pi.section(uid="measure", play_after="drive"):
                 exp_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
                 exp_pi.acquire(
-                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function
+                      # can be acquired only there is a measure signal
                 )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_pi.section(uid="relax_pi", length=qubits_parameters[component]["reset_delay_length"]):
@@ -197,7 +200,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_ss_nopi.section(uid="measure", play_after="drive"):
                 exp_ss_nopi.play(signal="measure", pulse=readout_pulse, phase = phase)
                 exp_ss_nopi.acquire(
-                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                    signal="acquire", handle="ac_nopi", kernel=readout_weighting_function
                 )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_ss_nopi.section(uid="relax_nopi", length=qubits_parameters[component]["reset_delay_length"]):
@@ -235,7 +238,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_ss_pi.section(uid="measure", play_after="drive"):
                 exp_ss_pi.play(signal="measure", pulse=readout_pulse, phase = phase)
                 exp_ss_pi.acquire(
-                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function # can be acquired only there is a measure signal
+                    signal="acquire", handle="ac_pi", kernel=readout_weighting_function
                 )
             # relax time after readout - for signal processing and qubit relaxation to ground state
             with exp_ss_pi.section(uid="relax_pi", length=qubits_parameters[component]["reset_delay_length"]):
@@ -377,6 +380,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         an2 = ax[1,1].annotate((f'Fidelity = {fdlty:.3f}'), xy = (np.average(nopi_data), max(nopi_hist_data[0])))
         an2.draggable()
 
+        self.save_results(experiment_name="nopi_pi_plot")
+
         plt.show()
 
         if is_gaussian_fit:
@@ -412,6 +417,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
             plt.legend()
 
+            self.save_results(experiment_name="nopi_pi_plot")
+
+            plt.show()
 
     def test_consecutive_measurements(self, npts_exponent, phase = 0, acquire_delay = 0,
                                       first_amp = 0,
@@ -682,6 +690,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ax.set_xlabel("Time (us)", fontsize=20)
         ax.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
 
+        self.save_results(experiment_name="T1_plot")
+
         plt.show()
 # In[]            
     def Pi2_cal(self, average_exponent = 12, start = 0, npts = 12, is_plot_simulation = False):
@@ -817,6 +827,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ax.set_title("Pi/2 calibration", fontsize=20)
         ax.set_xlabel("Number of pi/2 pulses", fontsize=20)
         ax.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
+
+        self.save_results(experiment_name="Pi2_cal")
 
         plt.show()
     
@@ -978,6 +990,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                             size = 16)
         an.draggable()
 
+        self.save_results(experiment_name="Pi_cal")
+
         plt.show()
         
             
@@ -1134,6 +1148,10 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                average_exponent = 12, duration = 100e-6, npts = 100,
                cavity_freq_detuning = 10e6,
                steady_time = 100e-6,
+               qubit_extra_phase = 0,
+               is_constant_drive = True,
+               is_sideband_drive = False,
+               is_displacement_drive = False,
                is_plot_simulation = False):
 
         device_setup = self.device_setup
@@ -1145,18 +1163,23 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         self.cavity_freq_detuning = cavity_freq_detuning
 
+        self.is_sideband_drive = is_sideband_drive
+
         # Define pulses
         readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
         drive_pulse_pi2, drive_pulse_pi, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
+        
+        _, cavity_drive_pulse, sidebands_pulse, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
 
-        cavity_drive_constant_chunk = pulse_library.const(
-            uid="cavity_drive_pulse_1",
-            length=duration/npts,
-            amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
-        )
+        # cavity_drive_constant_chunk = pulse_library.const(
+        #     uid="cavity_drive_pulse_1",
+        #     length=1e-6,
+        #     amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
+        # )
         
         if is_echo:
             qubit_drive_length = qubits_parameters[qubits_component]["pi_length"] + qubits_parameters[qubits_component]["pi2_length"]*2
@@ -1165,11 +1188,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         self.is_echo = is_echo
 
-        cavity_drive_constant_chunk_2 = pulse_library.const(
-            uid="cavity_drive_pulse_2",
-            length=qubit_drive_length,
-            amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
-        )
 
         time_sweep = LinearSweepParameter(uid="time_sweep", start=0, stop=duration - duration/npts, count=npts)
         
@@ -1211,45 +1229,43 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ):
             # inner loop - real time sweep of Ramsey time delays
             with exp_ramsey_with_photon.sweep(
-                uid="ramsey_sweep", parameter=[time_sweep,cavity_drive_length_sweep], alignment=SectionAlignment.RIGHT
+                uid="ramsey_sweep", parameter=time_sweep, alignment=SectionAlignment.LEFT
             ):
-                with exp_ramsey_with_photon.section(uid="drive_section", alignment=SectionAlignment.RIGHT):
-                    with exp_ramsey_with_photon.section(uid="cavity_drive_1"):
-                        @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
-                        def play_cavity_drive():
-                            exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant_chunk)
-                        # exp_ramsey_with_photon.play(signal = "cavity_drive", pulse = cavity_drive_constant_chunk_2) # pulse length for pi/2
+                # with exp_ramsey_with_photon.section(uid="drive_section", alignment=SectionAlignment.RIGHT):
+                with exp_ramsey_with_photon.section(uid="cavity_drive_1"):
 
-                    with exp_ramsey_with_photon.section(uid="cavity_drive_2", play_after="cavity_drive_1"):
-                        @repeat(cavity_drive_length_sweep, exp_ramsey_with_photon)
-                        def play_cavity_drive():
-                            exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant_chunk)
-                                                     # pulse length for delay time
+                    if is_displacement_drive:
+                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_pulse)
+                    
+                    if is_constant_drive:
+                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant, length = steady_time+duration)
+                    elif is_sideband_drive:
+                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=sidebands_pulse, length = steady_time+duration)
+                    # 충분히 길게 쏘도록 설정
+                    
+                with exp_ramsey_with_photon.section(
+                    uid="qubit_excitation", alignment=SectionAlignment.RIGHT
+                ):  
+                    exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length)
 
-                    # play qubit excitation pulse - pulse amplitude is swept
-                    with exp_ramsey_with_photon.section(
-                        uid="qubit_excitation", alignment=SectionAlignment.RIGHT
-                    ):  
-                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length)
-
-                        if is_echo:
-                            exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
-                            exp_ramsey_with_photon.delay(signal="drive", time=time_sweep/2)
-                            exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi)
-                            exp_ramsey_with_photon.delay(signal="drive", time=time_sweep/2)
-                            exp_ramsey_with_photon.play(signal="drive", 
-                                            pulse=drive_pulse_pi2,
-                                            phase = 2*np.pi*detuning*time_sweep)
-                        else:
-                            exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
-                            exp_ramsey_with_photon.delay(signal="drive", time=time_sweep)
-                            exp_ramsey_with_photon.play(signal="drive", 
-                                            pulse=drive_pulse_pi2, 
-                                            phase = 2*np.pi*detuning*time_sweep)
+                    if is_echo:
+                        exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
+                        exp_ramsey_with_photon.delay(signal="drive", time=time_sweep/2)
+                        exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi)
+                        exp_ramsey_with_photon.delay(signal="drive", time=time_sweep/2)
+                        exp_ramsey_with_photon.play(signal="drive", 
+                                        pulse=drive_pulse_pi2,
+                                        phase = 2*np.pi*detuning*time_sweep)
+                    else:
+                        exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2, phase = qubit_extra_phase)
+                        exp_ramsey_with_photon.delay(signal="drive", time=time_sweep)
+                        exp_ramsey_with_photon.play(signal="drive", 
+                                        pulse=drive_pulse_pi2, 
+                                        phase = 2*np.pi*detuning*time_sweep + qubit_extra_phase)
                 
                 # readout pulse and data acquisition
                 with exp_ramsey_with_photon.section(
-                    uid="readout_section", play_after="drive_section"
+                    uid="readout_section", play_after="qubit_excitation"
                 ):
                     # play readout pulse on measure line
                     exp_ramsey_with_photon.play(signal="measure", pulse=readout_pulse, phase = phase)
@@ -1295,53 +1311,122 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
     
     def Ramsey_amp_sweep(self, detuning = 0, is_echo = False,
                average_exponent = 12, duration = 100e-6, npts = 101,
-               cavity_freq_detuning = 10e6, amp_start = 0, amp_stop = 0.1, amp_npts = 11,
+               cavity_freq_detuning = 10e6, sweep_start = 0, sweep_stop = 0.1, sweep_npts = 11,
                kappa = 1e6, chi = 1e6,
                steady_time = 100e-6,
+               fixed_sideband_amp_l = 0,
+               is_constant_drive= True,
+               is_sideband_drive= False,
+               is_sideband_phase_sweep = False,
+               is_fourier_transform = False,
                is_plot_figure = False,
                is_plot_simulation = False):
+        
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
 
         def fit_func(x, A, B):
             return A*x**2 + B
 
-        amp_values = np.linspace(amp_start, amp_stop, amp_npts)
+        sweep_values = np.linspace(sweep_start, sweep_stop, sweep_npts)
 
         freq_detuning_list = []
         freq_err_list = []
         decay_rate_list = []
         decay_rate_err_list = []
 
-        for amp in amp_values:
-            self.cavity_parameters['m0']['cavity_drive_amp'] = amp
-            self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
-                                    duration=duration, npts=npts, detuning=detuning,
-                                    cavity_freq_detuning=cavity_freq_detuning,
-                                    steady_time = 5e-6,
-                                    is_plot_simulation=is_plot_simulation)
-            popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure)
-            
-            freq_detuning_list.append((popt[1]-detuning)*1e-6) # [MHz]
-            freq_err_list.append(popt_err[1]*1e-6) # [MHz]
-            decay_rate_list.append(popt[2]*1e-6) # [MHz]
-            decay_rate_err_list.append(popt_err[2]*1e-6) # [MHz]
+        freq_peak_list = []
 
+        if not is_sideband_phase_sweep:
+
+            for amp in sweep_values:
+                if is_constant_drive:
+                    self.cavity_parameters[cavity_component]['cavity_drive_amp'] = amp
+                elif is_sideband_drive:
+                    self.cavity_parameters[cavity_component]['sideband_amp_h'] = amp
+                    self.cavity_parameters[cavity_component]['sideband_amp_l'] = amp
+                    if fixed_sideband_amp_l != 0:
+                        self.cavity_parameters[cavity_component]['sideband_amp_l'] = fixed_sideband_amp_l
+
+                self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
+                                        duration=duration, npts=npts, detuning=detuning,
+                                        cavity_freq_detuning=cavity_freq_detuning,
+                                        steady_time = steady_time,
+                                        is_constant_drive = is_constant_drive,
+                                        is_sideband_drive = is_sideband_drive,
+                                        is_plot_simulation=is_plot_simulation)
+                
+                popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure,
+                                                  is_fourier_transform = is_fourier_transform)
+                
+                freq_detuning_list.append((popt[1]-detuning)*1e-6) # [MHz]
+                freq_err_list.append(popt_err[1]*1e-6) # [MHz]
+                decay_rate_list.append(popt[2]*1e-6) # [MHz]
+                decay_rate_err_list.append(popt_err[2]*1e-6) # [MHz]
+
+                if is_fourier_transform:
+
+                    freq_peak_list.append((self.fourier_freqs[np.argmax(self.fourier_amps)] - detuning)*1e-6)
+
+        else :
+            self.cavity_parameters[cavity_component]['sideband_amp_h'] = fixed_sideband_amp_l
+            self.cavity_parameters[cavity_component]['sideband_amp_l'] = fixed_sideband_amp_l
+
+            for phase in sweep_values:
+
+                self.cavity_parameters[cavity_component]['sideband_phase'] = phase
+
+                self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
+                                        duration=duration, npts=npts, detuning=detuning,
+                                        cavity_freq_detuning=cavity_freq_detuning,
+                                        steady_time = steady_time,
+                                        is_constant_drive = is_constant_drive,
+                                        is_sideband_drive = is_sideband_drive,
+                                        is_plot_simulation=is_plot_simulation)
+
+                popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure,
+                                                  is_fourier_transform = is_fourier_transform)
+
+                freq_detuning_list.append((popt[1]-detuning)*1e-6) # [MHz]
+                freq_err_list.append(popt_err[1]*1e-6) # [MHz]
+                decay_rate_list.append(popt[2]*1e-6) # [MHz]
+                decay_rate_err_list.append(popt_err[2]*1e-6) # [MHz]
+
+                if is_fourier_transform:
+
+                    freq_peak_list.append((self.fourier_freqs[np.argmax(self.fourier_amps)] - detuning)*1e-6)
+
+        ### data plot ######################################################################
+
+        if is_sideband_drive:
+            cavity_freq_detuning = self.cavity_parameters[cavity_component]['sideband_frequency_l']
+        
         fig, ax = plt.subplots(2, 1, figsize=(10, 10))
 
-        popt_fit, pcov_fit = scipy.optimize.curve_fit(fit_func, amp_values, freq_detuning_list)
+        popt_fit, pcov_fit = scipy.optimize.curve_fit(fit_func, sweep_values, freq_detuning_list)
 
-        ax[0].errorbar(amp_values, freq_detuning_list, yerr = freq_err_list, fmt = '--or', 
+        ax[0].errorbar(sweep_values, freq_detuning_list, yerr = freq_err_list, fmt = '--or', 
                        capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
-        ax[1].errorbar(amp_values, decay_rate_list, yerr = decay_rate_err_list, fmt = '--or',
+        ax[1].errorbar(sweep_values, decay_rate_list, yerr = decay_rate_err_list, fmt = '--or',
                        capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
-        ax[0].set_xlabel("Drive amplitude", fontsize=20)
+        if not is_sideband_phase_sweep:
+            ax[0].set_xlabel("Drive amplitude", fontsize=20)
+        else:
+            ax[0].set_xlabel("Sideband phase (rad)", fontsize=20)
         ax[0].set_ylabel("Frequency detuning (MHz)", fontsize=20)
         ax[0].set_title(f"{cavity_freq_detuning*1e-6}MHz away from center", fontsize=20)
-        ax[0].plot(amp_values, fit_func(amp_values, *popt_fit), 'b--', label='Fit')
+        ax[0].plot(sweep_values, fit_func(sweep_values, *popt_fit), 'b--', label='Fit')
         ax[0].legend()
 
         an = ax[0].annotate(r"$\Delta f: AV^2 + B$"+'\n'\
                             +f'A = {popt_fit[0]:.4f} ± {np.sqrt(np.diag(pcov_fit))[0]:.4f} MHz/V^2' + '\n'\
-                            +f'B = {popt_fit[1]:.4f} ± {np.sqrt(np.diag(pcov_fit))[1]:.4f} MHz',
+                            +f'B = {popt_fit[1]:.4f} ± {np.sqrt(np.diag(pcov_fit))[1]:.4f} MHz' + '\n'\
+                            +f'is_sideband_drive = {is_sideband_drive}'+'\n'\
+                            +f'fixed_sideband_amp_l = {fixed_sideband_amp_l}' + '\n'\
+                            +f'phase sweep = {is_sideband_phase_sweep}',
                             xy=(0.0, 0.0), xycoords='axes fraction',
                             fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
         
@@ -1350,7 +1435,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         A = popt_fit[0]
 
         Delta = cavity_freq_detuning*1e-6
-        chi = chi/2 # chi = chi_ge/2
         # a = np.sqrt( (A * (kappa**2 + chi**2)*(Delta**2+kappa**2/4))/(chi*kappa**2)  )
         a = np.sqrt((A*2*np.pi*(kappa**2/4 + Delta**2)*(Delta**2 + (kappa**2)/4 + chi**2)) / (2*chi*(kappa**2/4-chi**2+Delta**2)))
 
@@ -1361,16 +1445,160 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         an2.draggable()
 
-        ax[1].set_xlabel("Drive amplitude", fontsize=20)
+        print(f"photon number n+- in case of the last amplitude = { ((a*sweep_values[-1]*0.5)**2)/( (kappa**2)/4 + (Delta + chi)**2 ) :.4f}, {((a*sweep_values[-1]*0.5)**2)/( (kappa**2)/4 + (Delta - chi)**2 ) :.4f} ")
+
+        # epsilon = a*V (V = sweep_values[-1]*0.5) ; drive port output 7dbm = 5mW : 0.5V in V_rms (10dbm set햇을 때 7dbm 출력되는 것 확인)
+
+        if not is_sideband_phase_sweep:
+            ax[1].set_xlabel("Drive amplitude", fontsize=20)
+        else:
+            ax[1].set_xlabel("Sideband phase (rad)", fontsize=20)
+
         ax[1].set_ylabel("Decay rate (MHz)", fontsize=20)
         # ax[1].set_title(f"Center from {cavity_freq_detuning*1e-6}MHz away", fontsize=20)
         ax[0].tick_params(axis='both', which='major', labelsize=16)
         ax[1].tick_params(axis='both', which='major', labelsize=16)
 
+        self.save_results(experiment_name="Ramsey_amp_sweep")
+
+        if is_fourier_transform:
+
+            fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+
+            popt_fit, pcov_fit = scipy.optimize.curve_fit(fit_func, sweep_values, freq_peak_list)
+
+            ax.plot(sweep_values, freq_peak_list, 'or', label='Data')
+            ax.plot(sweep_values, fit_func(sweep_values, *popt_fit), 'b--', label='Fit')
+
+            if not is_sideband_phase_sweep:
+                ax.set_xlabel("Drive amplitude", fontsize=20)
+            else:
+                ax.set_xlabel("Sideband phase (rad)", fontsize=20)
+            ax.set_ylabel("Frequency detuning (MHz)", fontsize=20)
+            ax.set_title(f"{cavity_freq_detuning*1e-6}MHz away from center", fontsize=20)
+            ax.legend()
+
+            an = ax.annotate(r"$\Delta f: AV^2 + B$"+'\n'\
+                            +f'A = {popt_fit[0]:.4f} ± {np.sqrt(np.diag(pcov_fit))[0]:.4f} MHz/V^2' + '\n'\
+                            +f'B = {popt_fit[1]:.4f} ± {np.sqrt(np.diag(pcov_fit))[1]:.4f} MHz' + '\n'\
+                            +f'is_sideband_drive = {is_sideband_drive}'+'\n'\
+                            +f'fixed_sideband_amp_l = {fixed_sideband_amp_l}' + '\n'\
+                            +f'phase sweep = {is_sideband_phase_sweep}',
+                            xy=(0.0, 0.0), xycoords='axes fraction',
+                            fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
+            
+            an.draggable()
+        
+            A = popt_fit[0]
+
+            Delta = cavity_freq_detuning*1e-6
+            # a = np.sqrt( (A * (kappa**2 + chi**2)*(Delta**2+kappa**2/4))/(chi*kappa**2)  )
+            a = np.sqrt((A*2*np.pi*(kappa**2/4 + Delta**2)*(Delta**2 + (kappa**2)/4 + chi**2)) / (2*chi*(kappa**2/4-chi**2+Delta**2)))
+
+            an2 = ax.annotate(r"$\frac{\epsilon}{2\pi} = aV$"+'\n'\
+                                    + f"a={a:.4f} MHz/V",
+                                    xy=(0.0, 0.1), xycoords='axes fraction',
+                                    fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
+
+            an2.draggable()
+
+            self.save_results(experiment_name="Ramsey_amp_sweep", detail="fourier_transform_peak")
+
+        plt.show()
 
 
 
-    def plot_Ramsey(self, is_ramsey_with_photon = False, is_fit = True, is_plot=True):
+    def Ramsey_disp_amp_sweep_with_SB(self, detuning = 0, is_echo = True,
+               average_exponent = 12, duration = 100e-6, npts = 101,
+               disp_amp_start = 0, disp_amp_stop = 0.1, disp_amp_npts = 11,
+               is_disp_amp_real = True,
+               steady_time = 100e-6,
+               is_plot_figure = False,
+               is_plot_simulation = False):
+        
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        sweep_values = np.linspace(disp_amp_start, disp_amp_stop, disp_amp_npts)
+
+        if is_disp_amp_real:
+            sweep_values = sweep_values 
+        else:
+            sweep_values = sweep_values * 1j
+
+        freq_detuning_list = []
+        freq_err_list = []
+        decay_rate_list = []
+        decay_rate_err_list = []
+
+        for amp in sweep_values:
+            
+            self.cavity_parameters[cavity_component]['cavity_drive_amp'] = amp
+
+            self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
+                                    duration=duration, npts=npts, detuning=detuning,
+                                    cavity_freq_detuning=0,
+                                    steady_time = steady_time,
+                                    is_constant_drive = False,
+                                    is_sideband_drive = True,
+                                    is_displacement_drive = True,
+                                    is_plot_simulation=is_plot_simulation)
+            
+            popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure)
+            
+            freq_detuning_list.append((popt[1]-detuning)*1e-6) # [MHz]
+            freq_err_list.append(popt_err[1]*1e-6) # [MHz]
+            decay_rate_list.append(popt[2]*1e-6) # [MHz]
+            decay_rate_err_list.append(popt_err[2]*1e-6) # [MHz]
+
+
+        ### data plot ######################################################################
+
+        cavity_freq_detuning = self.cavity_parameters[cavity_component]['sideband_frequency_l']
+        
+        fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+
+        if is_disp_amp_real:
+            sweep_values = np.real(sweep_values) 
+        else:
+            sweep_values = np.imag(sweep_values)
+
+        ax[0].errorbar(np.real(sweep_values), freq_detuning_list, yerr = freq_err_list, fmt = '--or', 
+                       capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+        ax[1].errorbar(np.real(sweep_values), decay_rate_list, yerr = decay_rate_err_list, fmt = '--or',
+                       capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+        
+        ax[0].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        
+        ax[0].set_ylabel("Frequency detuning (MHz)", fontsize=20)
+        ax[0].set_title(f"{cavity_freq_detuning*1e-6}MHz away from center", fontsize=20)
+        
+        ax[0].legend()
+
+        an = ax[0].annotate(rf'is_disp_amp_real = {is_disp_amp_real}'+'\n'\
+                            +f'sideband_amp = {self.cavity_parameters[cavity_component]["sideband_amp_h"]}' + '\n'\
+                            +f'sideband_phase = {self.cavity_parameters[cavity_component]["sideband_phase"]}',
+                            xy=(0.0, 0.0), xycoords='axes fraction',
+                            fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
+        
+        an.draggable()
+
+        ax[1].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        ax[1].set_ylabel("Decay rate (MHz)", fontsize=20)
+        # ax[1].set_title(f"Center from {cavity_freq_detuning*1e-6}MHz away", fontsize=20)
+        ax[0].tick_params(axis='both', which='major', labelsize=16)
+        ax[1].tick_params(axis='both', which='major', labelsize=16)
+
+        self.save_results(experiment_name="Ramsey_disp_amp_sweep_with_SB")
+
+        plt.show()
+
+
+
+    def plot_Ramsey(self, is_ramsey_with_photon = False, is_fit = True, is_plot=True, is_fourier_transform = False):
 
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
@@ -1379,7 +1607,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         if is_ramsey_with_photon:
             results = self.ramsey_with_photon_results
-            time = results.acquired_results['ramsey'].axis[1][0]
+            time = results.acquired_results['ramsey'].axis[1]
 
         else :
             results = self.ramsey_results
@@ -1434,18 +1662,42 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 else:
                     ax.set_title("Ramsey measurement", fontsize=20)
             else :
-                if self.is_echo:
-                    ax.set_title(f"Echo Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+                if self.is_sideband_drive:
+                    cavity_freq_detuning = self.cavity_parameters[cavity_component]["sideband_frequency_l"]
+                    amp = self.cavity_parameters[cavity_component]['sideband_amp_l']
                 else:
-                    ax.set_title(f"Ramsey measurement with photon (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']}, cavity_detuning:{self.cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+                    cavity_freq_detuning = self.cavity_freq_detuning
+                    amp = self.cavity_parameters[cavity_component]['cavity_drive_amp']
+
+                if self.is_echo:
+                    ax.set_title(f"Echo Ramsey measurement with photon (amp:{amp}, cavity_detuning:{cavity_freq_detuning*1e-6}MHz)", fontsize=20)
+                else:
+                    ax.set_title(f"Ramsey measurement with photon (amp:{amp}, cavity_detuning:{cavity_freq_detuning*1e-6}MHz)", fontsize=20)
 
             ax.set_xlabel("Time (us)", fontsize=20)
             ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
 
-            return popt, np.sqrt(np.diag(pcov))
 
-        else:
-            return popt, np.sqrt(np.diag(pcov))
+            self.save_results(experiment_name="Ramsey" if not is_ramsey_with_photon else "Ramsey_with_photon")
+            plt.show()
+
+        if is_fourier_transform:
+            
+            self.fourier_freqs, self.fourier_amps = self.fourier_transform(data, time)
+
+            if is_plot :
+                plt.figure(figsize=(6,4))
+                plt.plot(self.fourier_freqs, self.fourier_amps)
+                plt.xlabel("Frequency (MHz)")
+                plt.ylabel("Amplitude (a.u.)")
+                plt.title("FFT spectrum of Ramsey data")
+                plt.grid(True)
+
+                self.save_results(experiment_name="Ramsey" if not is_ramsey_with_photon else "Ramsey_with_photon", detail="FT")
+
+                plt.show()
+
+        return popt, np.sqrt(np.diag(pcov))
     
     def long_time_Ramsey(self, time_end, time_gap, average_exponent, detuning, duration, npts):
         
@@ -1489,6 +1741,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         plt.xlabel("Time (minutes)")
         plt.tight_layout()
+
+        self.save_results(experiment_name="Long_time_Ramsey")
         plt.show()
 
 # In[] Rabi
@@ -1576,12 +1830,15 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ax[0].plot(self.rabi_amp_results.acquired_results['amp_rabi'].axis[0], np.real(self.rabi_amp_data), color="r", marker="o")
         ax[1].plot(self.rabi_amp_results.acquired_results['amp_rabi'].axis[0], np.imag(self.rabi_amp_data), color="r", marker="o")
 
+
+        self.save_results(experiment_name="Rabi_amplitude")
         plt.show()
             
 
 # In[]
     def Rabi_length(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6, # start_time is for preventing very short pulse duration/npts.
-                    npts = 100, is_single_shot = True, is_plot_simulation = False):
+                    npts = 100, detuning_freq = 0,
+                    is_single_shot = True, is_plot_simulation = False):
         
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters 
@@ -1591,6 +1848,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             "duration": duration,
             "npts": npts,
             "start_time": start_time,
+            "detuning_freq": detuning_freq,
         }
         
         ## define pulses used for experiment
@@ -1615,7 +1873,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         else :
 
-            rabi_drive = pulse_library.const(uid="drive_pulse", 
+            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
                                                 length = duration, 
                                                 amplitude = qubits_parameters[component]["rabi_drive_amp"])
 
@@ -1698,6 +1956,19 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 # relax time after readout - for qubit relaxation to groundstate and signal processing
                 with exp_rabi_length.section(uid="reserve", length=qubits_parameters[component]["reset_delay_length"]):
                     exp_rabi_length.reserve(signal="measure")
+        
+        exp_calibration = Calibration()
+        # sets the oscillator of the experimental measure signal
+        # for spectroscopy, set the sweep parameter as frequency
+        qubit_drive_oscillator = Oscillator(
+            "qubit_drive_if_osc",
+            frequency=self.qubits_parameters[component]["ge_freq_IF"] + detuning_freq,
+        )
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        )
+        exp_rabi_length.set_calibration(exp_calibration)
+
     
         signal_map = self.signal_map(component)
         
@@ -1709,6 +1980,143 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         if is_plot_simulation:
             self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
+            show_pulse_sheet("rabi", compiled_experiment_rabi)
+
+
+    def Rabi_length_with_photon(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6, # start_time is for preventing very short pulse duration/npts.
+                    npts = 100, detuning_freq = 0, steady_time = 20e-6,
+                    is_sideband_drive= True,
+                    is_single_shot = True, is_plot_simulation = False):
+        
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        
+        self.exp_Rabi_length_dict = {
+            "duration": duration,
+            "npts": npts,
+            "start_time": start_time,
+            "detuning_freq": detuning_freq,
+            "steady_time": steady_time,
+            "is_sideband_drive": is_sideband_drive,
+        }
+        
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
+        
+        rabi_drive_chunk, rabi_drive, ramp_up, ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+                                                               qubits_component, cavity_component, length = duration)
+
+        rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
+
+        
+        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(count, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=count):
+                        for v in count.values:
+                            with exp.case(v):
+                                if v == 0:
+                                    exp.play(signal="drive", pulse=ramp_up)
+                                    exp.play(signal="drive", pulse=ramp_down)
+                                else:
+                                    exp.play(signal="drive", pulse=ramp_up)
+                                    for _ in range(int(v)):
+                                        f()
+                                    exp.play(signal="drive", pulse=ramp_down)
+                else:
+                    for _ in range(count):
+                        f()
+
+            return decorator
+        
+        if is_single_shot :
+            averaging_mode = AveragingMode.SINGLE_SHOT
+            self.is_single_shot = True
+        else:
+            averaging_mode = AveragingMode.CYCLIC
+            self.is_single_shot = False
+        
+        exp_rabi_length_with_photon = Experiment(
+            uid="Rabi_length_with_photon",
+            signals=[
+                ExperimentSignal("drive"),
+                ExperimentSignal("measure"),
+                ExperimentSignal("acquire"),
+                ExperimentSignal("cavity_drive"),
+            ],
+        )
+
+        with exp_rabi_length_with_photon.acquire_loop_rt(
+            uid="shots",
+            count=pow(2, average_exponent),
+            averaging_mode=averaging_mode,
+            acquisition_type=AcquisitionType.INTEGRATION,
+        ):
+            
+            with exp_rabi_length_with_photon.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
+                
+                with exp_rabi_length_with_photon.section(uid="cavity_drive_1"):
+                    # @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
+                    @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_with_photon) # 2e-6 extra time
+                    def play_cavity_drive():
+                        exp_rabi_length_with_photon.play(signal="cavity_drive", pulse=sidebands_pulse)
+                    # 충분히 길게 쏘도록 설정
+
+                with exp_rabi_length_with_photon.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
+                    
+                    exp_rabi_length_with_photon.delay(signal="drive", time=steady_time)
+                    
+                    exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
+
+                # readout pulse and data acquisition
+                with exp_rabi_length_with_photon.section(uid="readout_section", play_after="rabi_drives"):
+                    # play readout pulse on measure line
+                    exp_rabi_length_with_photon.play(signal="measure", pulse=readout_pulse, phase = qubits_parameters[qubits_component]["readout_phase"])
+                    # trigger signal data acquisition
+                    exp_rabi_length_with_photon.acquire(
+                        signal="acquire",
+                        handle="rabi_length",
+                        kernel=readout_weighting_function,
+                    )
+                # relax time after readout - for qubit relaxation to groundstate and signal processing
+                with exp_rabi_length_with_photon.section(uid="reserve", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                    exp_rabi_length_with_photon.reserve(signal="measure")
+        
+        exp_calibration = Calibration()
+        # sets the oscillator of the experimental measure signal
+        # for spectroscopy, set the sweep parameter as frequency
+        qubit_drive_oscillator = Oscillator(
+            "qubit_drive_if_osc",
+            frequency=self.qubits_parameters[qubits_component]["ge_freq_IF"] + detuning_freq,
+        )
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        )
+        exp_rabi_length_with_photon.set_calibration(exp_calibration)
+
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+            "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+        }
+
+        exp_rabi_length_with_photon.set_signal_map(signal_map)
+        
+        compiled_experiment_rabi = self.session.compile(exp_rabi_length_with_photon)
+        
+        self.rabi_length_results = self.session.run(compiled_experiment_rabi)
+        
+        if is_plot_simulation:
+            self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=qubits_component)
             show_pulse_sheet("rabi", compiled_experiment_rabi)
 
 
@@ -1773,7 +2181,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             # Var(1/X) = Var(X)/X^4 => std(1/X) = std(X)/X^2
 
             ax.plot(time*1e6, sfit1.func(time, *popt))
-            an = ax.annotate((f'decay time = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us], freq = {(freq*1e-6):.3f}±{(freq_err*1e-6):.3f}[MHz]'), 
+            an = ax.annotate((f'decay time = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us], freq = {(freq*1e-6):.3f}±{(freq_err*1e-6):.3f}[MHz]'+
+                              f'\n detuning freq = {(self.exp_Rabi_length_dict["detuning_freq"]*1e-6)}[MHz]' +
+                              f'\n is_sideband_drive = {self.exp_Rabi_length_dict.get("is_sideband_drive", False)}'), 
                                 xy = (np.average(time*1e6), np.average(data)+(np.max(data)-np.min(data))*0.3),
                                 size = 16)
             an.draggable()
@@ -1782,15 +2192,20 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ax.set_xlabel("Time (us)", fontsize=20)
             ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
 
+        self.save_results(experiment_name="Rabi_length")
+        plt.show()
+
 
     def Rabi_length_spin_locking(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6,
-                    npts = 100, rabi_phase = 0, is_init_pi2 = True, is_plot_simulation = False):
+                    npts = 100, rabi_phase = 0, is_init_pi2 = True, detuning_freq = 0, init_pi2_phase = 0,
+                    is_sideband_drive= True, steady_time = 20e-6,
+                    is_plot_simulation = False):
         
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
         cavity_parameters = self.cavity_parameters
 
-        component = list(qubits_parameters.keys())[self.which_qubit]
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
         
         self.exp_Rabi_length_spin_locking_dict = {
@@ -1798,67 +2213,61 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             "npts": npts,
             "rabi_phase": rabi_phase,
             "start_time": start_time,
+            "detuning_freq": detuning_freq,
+            "steady_time": steady_time,
+            "is_init_pi2": is_init_pi2,
+            "init_pi2_phase": init_pi2_phase,
+            "is_sideband_drive": is_sideband_drive,
         }
         
-        ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
-        
         pi2_pulse, _, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
-                        component, cavity_component)
+                        qubits_component, cavity_component)
+        
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
+        
+        rabi_drive_chunk, rabi_drive, ramp_up, ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+                                                               qubits_component, cavity_component, length = duration)
         
 
         if duration > 2e-6 :
 
             rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
                                                 length = duration/npts, 
-                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
+                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
         
         else :
 
-            rabi_drive = pulse_library.const(uid="drive_pulse", 
+            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
                                                 length = duration, 
-                                                amplitude = qubits_parameters[component]["rabi_drive_amp"])
-        
-
-        ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
-                                        length=qubits_parameters[component]["ramp_length"], 
-                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
-        ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
-                                        length=qubits_parameters[component]["ramp_length"], 
-                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
+                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
         
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
 
         
-        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-            def decorator(f):
-                if isinstance(count, (LinearSweepParameter, SweepParameter)):
-                    with exp.match(sweep_parameter=count):
-                        for v in count.values:
-                            with exp.case(v):
-                                if v == 0:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    exp.play(signal="drive", pulse=ramp_down)
-                                else:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    for _ in range(int(v)):
-                                        f()
-                                    exp.play(signal="drive", pulse=ramp_down)
-                else:
-                    for _ in range(count):
-                        f()
+        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+        #     def decorator(f):
+        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
+        #             with exp.match(sweep_parameter=count):
+        #                 for v in count.values:
+        #                     with exp.case(v):
+        #                         if v == 0:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #                         else:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             for _ in range(int(v)):
+        #                                 f()
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #         else:
+        #             for _ in range(count):
+        #                 f()
 
-            return decorator
+        #     return decorator
         
         def _xyz(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
             def decorator(f):
@@ -1878,6 +2287,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 ExperimentSignal("drive"),
                 ExperimentSignal("measure"),
                 ExperimentSignal("acquire"),
+                ExperimentSignal("cavity_drive"),
             ],
         )
 
@@ -1890,25 +2300,39 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             
             with exp_rabi_length_spin_locking.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 with exp_rabi_length_spin_locking.sweep(uid="xyz_sweep", parameter=xyz_sweep_case):
-                    with exp_rabi_length_spin_locking.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
+
+                    with exp_rabi_length_spin_locking.section(uid="cavity_drive_1"):
                         
+                        if is_sideband_drive:
+                            # @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_spin_locking) # 2e-6 extra time
+                            # def play_cavity_drive():
+                            exp_rabi_length_spin_locking.play(signal="cavity_drive", pulse=sidebands_pulse,
+                                                                length=start_time+duration+steady_time+2e-6)
+                            # 충분히 길게 쏘도록 설정
+
+                    with exp_rabi_length_spin_locking.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
+
+                        if is_sideband_drive:
+                            with exp_rabi_length_spin_locking.section(uid="steady_time", alignment=SectionAlignment.RIGHT):
+                                exp_rabi_length_spin_locking.delay(signal="drive", time=steady_time)
+
                         if is_init_pi2:
                             with exp_rabi_length_spin_locking.section(uid="qubit_drive", alignment=SectionAlignment.RIGHT):
-                                exp_rabi_length_spin_locking.play(signal = "drive", pulse = pi2_pulse)
+                                exp_rabi_length_spin_locking.play(signal = "drive", pulse = pi2_pulse, phase = init_pi2_phase)
 
-                        if duration > 2e-6 :
+                        # if duration > 2e-6 :
 
-                            @repeat(rabi_length_sweep, exp_rabi_length_spin_locking)
-                            def play_rabi():
-                                exp_rabi_length_spin_locking.play(signal = "drive", 
-                                                    pulse = rabi_drive_chunk,
-                                                    phase = rabi_phase*np.pi/180)
+                        #     @repeat(rabi_length_sweep, exp_rabi_length_spin_locking)
+                        #     def play_rabi():
+                        #         exp_rabi_length_spin_locking.play(signal = "drive", 
+                        #                             pulse = rabi_drive_chunk,
+                        #                             phase = rabi_phase*np.pi/180)
                         
-                        else :
-                            with exp_rabi_length_spin_locking.section(uid="qubit_rabi_drive"):
-                                exp_rabi_length_spin_locking.play(signal = "drive", pulse = rabi_drive, 
-                                                                length = start_time+rabi_length_sweep*(duration/npts),
-                                                                phase = rabi_phase*np.pi/180)
+                        # else :
+                        with exp_rabi_length_spin_locking.section(uid="qubit_rabi_drive"):
+                            exp_rabi_length_spin_locking.play(signal = "drive", pulse = rabi_drive, 
+                                                            length = start_time+rabi_length_sweep*(duration/npts),
+                                                            phase = rabi_phase)
                      
                     
                     with exp_rabi_length_spin_locking.section(uid="xyz", play_after="rabi_drives"):
@@ -1924,7 +2348,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                     # readout pulse and data acquisition
                     with exp_rabi_length_spin_locking.section(uid="readout_section", play_after="xyz"):
                         # play readout pulse on measure line
-                        exp_rabi_length_spin_locking.play(signal="measure", pulse=readout_pulse, phase = qubits_parameters[component]["readout_phase"])
+                        exp_rabi_length_spin_locking.play(signal="measure", pulse=readout_pulse, phase = qubits_parameters[qubits_component]["readout_phase"])
                         # trigger signal data acquisition
                         exp_rabi_length_spin_locking.acquire(
                             signal="acquire",
@@ -1932,10 +2356,27 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                             kernel=readout_weighting_function,
                         )
                     # relax time after readout - for qubit relaxation to groundstate and signal processing
-                    with exp_rabi_length_spin_locking.section(uid="reserve", length=qubits_parameters[component]["reset_delay_length"]):
+                    with exp_rabi_length_spin_locking.section(uid="reserve", length=cavity_parameters[cavity_component]["reset_delay_length"]):
                         exp_rabi_length_spin_locking.reserve(signal="measure")
+
+        exp_calibration = Calibration()
+        # sets the oscillator of the experimental measure signal
+        # for spectroscopy, set the sweep parameter as frequency
+        qubit_drive_oscillator = Oscillator(
+            "qubit_drive_if_osc",
+            frequency=self.qubits_parameters[qubits_component]["ge_freq_IF"] + detuning_freq,
+        )
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        )
+        exp_rabi_length_spin_locking.set_calibration(exp_calibration)
     
-        signal_map = self.signal_map(component)
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+            "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+        }
         
         exp_rabi_length_spin_locking.set_signal_map(signal_map)
         
@@ -1944,7 +2385,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         self.rabi_length_spin_locking_results = self.session.run(compiled_experiment_rabi)
         
         if is_plot_simulation:
-            self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=component)
+            self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=qubits_component)
             show_pulse_sheet("rabi_spin_locking", compiled_experiment_rabi)
 
 
@@ -1986,10 +2427,23 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         
         ax.legend()
 
-        an = ax.annotate(f"rabi phase : {self.exp_Rabi_length_spin_locking_dict['rabi_phase']}",
-                             xy = (np.average(time), np.average(data[:,0])),
+        cavity_parameters = self.cavity_parameters
+
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        an = ax.annotate(f"rabi phase : {self.exp_Rabi_length_spin_locking_dict['rabi_phase']}"+
+                             f"\ndetuning freq : {self.exp_Rabi_length_spin_locking_dict['detuning_freq']*1e-6} MHz"+
+                             f"\n is_sideband_drive : {self.exp_Rabi_length_spin_locking_dict['is_sideband_drive']}"+
+                             f"\n sideband amp : {self.cavity_parameters[cavity_component]['sideband_amp_l']}"+
+                             f"\n sideband freq : {self.cavity_parameters[cavity_component]['sideband_frequency_l']*1e-6} MHz"+
+                             f"\n is_init_pi2 : {self.exp_Rabi_length_spin_locking_dict['is_init_pi2']}" +
+                             f"\n init_pi2_phase : {self.exp_Rabi_length_spin_locking_dict['init_pi2_phase']}",
+                             xy = (np.average(time)*1e6, np.average(data[:,0])),
                              size = 16)
         an.draggable()
+
+        self.save_results(experiment_name="Rabi_length_spin_locking")
+        plt.show()
 
 # In[] All XY
 
@@ -2164,6 +2618,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ax.set_xticklabels(self.AllXY_pulses)
         ax.set_title('AllXY data')
         ax.tick_params(axis='x', rotation=80, labelsize=10)
+
+        self.save_results(experiment_name="All_XY")
+        plt.show()
 
 # In[]
 
@@ -2458,6 +2915,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         plt.ylabel("# of Rabi pulses(pi x 2)")
         plt.colorbar(label='I value')
         plt.tight_layout()
+
+        self.save_results(experiment_name="error_amplification")
         plt.show()
 
 # In[] CR Calibration

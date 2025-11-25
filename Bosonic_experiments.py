@@ -29,7 +29,7 @@ from laboneq.contrib.example_helpers.randomized_benchmarking_helper import (
     generate_play_rb_pulses,
     make_pauli_gate_map,
 )
-from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
+# from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
 from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect import (
     pulse_update,
 )
@@ -128,7 +128,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[component]["readout_phase"]
@@ -274,6 +274,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax2.set_xlabel("Time (us)", fontsize=20)
         ax2.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
 
+        self.save_results(experiment_name="Cavity_T1")
+
         plt.show()
 
 # In[]
@@ -405,6 +407,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax.set_xlabel("Freq", fontsize=20)
         ax.set_ylabel(f"{self.which_data} (a.u.)", fontsize=20)
 
+        self.save_results(experiment_name="Cavity_mode_spectroscopy")
         plt.show()
 
 # In[] cavity_pi_nopi
@@ -425,6 +428,12 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         qubits_component = list(qubits_parameters.keys())[self.which_qubit]
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
 
+        self.cavity_pi_nopi_dict = {
+            "freq_start": freq_start,
+            "freq_stop": freq_stop,
+            "freq_npts": freq_npts
+        }
+
         if is_qubit2:
             self.is_qubit2 = True
             qubit2_component = list(qubits_parameters.keys())[qubit2]
@@ -438,7 +447,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -449,7 +458,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         sweep_case_2 = LinearSweepParameter(uid="crosskerr_check", start=0, stop=1, count=2)
 
-        sweep_freq_cases = LinearSweepParameter(uid="sweep_freq", start = freq + freq_start, stop = freq + freq_stop, count = freq_npts)
+        sweep_freq_cases = LinearSweepParameter(uid="sweep_freq", start = 0, stop = freq_npts, count = freq_npts+1)
 
         def sweep_exp_cases(sweep_case: int | SweepParameter | LinearSweepParameter,
                             sweep_freq_cases: int | SweepParameter | LinearSweepParameter,
@@ -519,7 +528,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                                     with exp_cavity_pi_nopi.section():
                                         exp_cavity_pi_nopi.play(signal="cavity_drive", 
                                                                 pulse=cond_disp_pulse, 
-                                                                pulse_parameters={"frequency": sweep_value})
+                                                                pulse_parameters={"frequency": freq + freq_start + (freq_stop - freq_start)/(freq_npts)*sweep_value })
                                         exp_cavity_pi_nopi.reserve(signal="drive")
                                     
                                 elif exp_case_num == 1: # pi case
@@ -537,7 +546,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                                     with exp_cavity_pi_nopi.section():
                                         exp_cavity_pi_nopi.play(signal="cavity_drive", 
                                                                 pulse=cond_disp_pulse, 
-                                                                pulse_parameters={"frequency": sweep_value})
+                                                                pulse_parameters={"frequency": freq + freq_start + (freq_stop - freq_start)/(freq_npts)*sweep_value})
                                         if is_qubit2:
                                             exp_cavity_pi_nopi.reserve(signal="drive")
                                             exp_cavity_pi_nopi.reserve(signal="drive2")
@@ -613,7 +622,11 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         else:
             data = np.imag(self.cavity_pi_nopi_data)
 
-        freq_sweep_list = self.cavity_pi_nopi_results.acquired_results['cavity_pi_nopi'].axis[0]
+        freq_start = self.cavity_pi_nopi_dict["freq_start"]
+        freq_stop = self.cavity_pi_nopi_dict["freq_stop"]
+        freq_npts = self.cavity_pi_nopi_dict["freq_npts"]
+
+        freq_sweep_list = freq_start + (freq_stop - freq_start)/(freq_npts) * self.cavity_pi_nopi_results.acquired_results['cavity_pi_nopi'].axis[0]
 
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
@@ -632,8 +645,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[0][0], label='nopi', marker='o', linestyle=':', color='b')
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[0][1], label='pi', marker='o', linestyle=':', color='r')
-        ax[0].plot((freq_sweep_list-freq)/1e6, data[:,0,0], label='nopi', marker='o', linestyle=':', color='b')
-        ax[0].plot((freq_sweep_list-freq)/1e6, data[:,0,1], label='pi', marker='o', linestyle=':', color='r')
+        ax[0].plot((freq_sweep_list)/1e6, data[:,0,0], label='nopi', marker='o', linestyle=':', color='b')
+        ax[0].plot((freq_sweep_list)/1e6, data[:,0,1], label='pi', marker='o', linestyle=':', color='r')
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[0,:,0], label='nopi', marker='o', linestyle=':', color='b')
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[0,:,1], label='pi', marker='o', linestyle=':', color='r')
         ax[0].set_title('Cavity pi-nopi, only cross Kerr effect')
@@ -643,26 +656,28 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         # ax[1].plot((freq_sweep_list-freq)/1e6, data[1][0], label='nopi', marker='o', linestyle=':', color='b')
         # ax[1].plot((freq_sweep_list-freq)/1e6, data[1][1], label='pi', marker='o', linestyle=':', color='r')
-        ax[1].plot((freq_sweep_list-freq)/1e6, data[:,1,0], label='nopi', marker='o', linestyle=':', color='b')
-        ax[1].plot((freq_sweep_list-freq)/1e6, data[:,1,1], label='pi', marker='o', linestyle=':', color='r')
+        ax[1].plot((freq_sweep_list)/1e6, data[:,1,0], label='nopi', marker='o', linestyle=':', color='b')
+        ax[1].plot((freq_sweep_list)/1e6, data[:,1,1], label='pi', marker='o', linestyle=':', color='r')
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[1,:,0], label='nopi', marker='o', linestyle=':', color='b')
         # ax[0].plot((freq_sweep_list-freq)/1e6, data[1,:,1], label='pi', marker='o', linestyle=':', color='r')
         ax[1].set_title('Cavity pi-nopi')
         ax[1].set_xlabel('Frequency (MHz)')
         ax[1].set_ylabel(f'[{self.which_data}] (a.u.)')
         ax[1].legend()
+        self.save_results(experiment_name="Cavity_pi_nopi")
 
         fig2, ax2 = plt.subplots(1, 1, figsize=(20, 8))
 
         fig2.suptitle(f"length:{length}, amp:{amp}, detuning:{detuning/1e6}MHz, sigma:{sigma}", fontsize=18)
 
-        ax2.plot((freq_sweep_list-freq)/1e6, data[:,1,0]-data[:,0,0], label='nopi', marker='o', linestyle=':', color='b')
-        ax2.plot((freq_sweep_list-freq)/1e6, data[:,1,1]-data[:,0,1], label='pi', marker='o', linestyle=':', color='r')
+        ax2.plot((freq_sweep_list)/1e6, data[:,1,0]-data[:,0,0], label='nopi', marker='o', linestyle=':', color='b')
+        ax2.plot((freq_sweep_list)/1e6, data[:,1,1]-data[:,0,1], label='pi', marker='o', linestyle=':', color='r')
         ax2.set_title('Cavity pi-nopi without cross Kerr effect')
         ax2.set_xlabel('Frequency (MHz)')
         ax2.set_ylabel(f'[{self.which_data}] (a.u.)')
         ax2.legend()
 
+        self.save_results(experiment_name="Cavity_pi_nopi")
         plt.show()
 
 
@@ -686,7 +701,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -868,7 +883,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax.set_xlabel('Amplitude (a.u.)')
         ax.set_ylabel(f'[{self.which_data}] (a.u.)')
         ax.legend()
- 
+
+        self.save_results(experiment_name="CNOD_calibration")
         plt.show()
 
 # In[] acquired CNOD_geometric_phase
@@ -969,7 +985,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1137,7 +1153,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1277,6 +1293,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax2.tick_params(axis='x', labelsize=10)
 
         plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+        self.save_results(experiment_name="disp_calibration_geophase")
         plt.show()
 
 
@@ -1294,7 +1312,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1417,6 +1435,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax[1].set_ylabel(f'[{self.which_data}] (a.u.)')
         ax[1].legend()
 
+        self.save_results(experiment_name="disp_calibration_parity")
+        plt.show()
+
 
 
 
@@ -1445,7 +1466,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1603,6 +1624,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax2.set_xlabel('Photon number')
         ax2.set_ylabel('relative frequency (Hz)')
         ax2.text(0.5, 0.05, f'K_c = {slope/ (2 * wait_time  * 360):.3f} Hz', transform=ax2.transAxes, fontsize=12, verticalalignment='top')
+        
+        self.save_results(experiment_name="out_and_back_measurement")
         plt.show()
         
         # Create a 2D plot with the original data
@@ -1615,6 +1638,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         ax.set_xlabel('Photon number')
         ax.set_ylabel('Phase (deg)')
+
+        self.save_results(experiment_name="out_and_back_measurement")
         plt.show()
 
 # In[] to get chi between memory and qubit, ramsey-like experiment
@@ -1635,7 +1660,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                          qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1722,6 +1747,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax.set_xlabel('Wait time (s)')
         ax.set_ylabel(f'[{self.which_data}] (a.u.)')
 
+        self.save_results(experiment_name="qubit_state_revival")
         plt.show()
 
 # In[] storage mode characterization
@@ -1745,7 +1771,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1899,6 +1925,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         ax[1].set_ylabel(f'[{self.which_data}] (a.u.)')
         ax[1].legend()
 
+        self.save_results(experiment_name="storage_mode_characterization")
         plt.show()
 
 # In[] with post selection
@@ -1936,7 +1963,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse,_,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1980,7 +2007,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     exp_wigner_characteristic_function.play(signal="drive", pulse=pi2_pulse)
                 with exp_wigner_characteristic_function.section(uid="CNOD", play_after="qubit_preparation"):
                     self.CNOD(exp=exp_wigner_characteristic_function, cond_disp_pulse=cond_disp_pulse,
-                            pi_pulse=pi_pulse, amp=1,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
+                            pi_pulse=pi_pulse, amp=alpha,  # amp of asym pulse is defined at "cond_disp_pulse_amp"
                             prev_uid=None)
 
         def schrodinger_cat_state_2():
@@ -2166,6 +2193,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             plt.xlabel(r'Re($\alpha$)')
             plt.ylabel(r'Im($\alpha$)')
 
+            self.save_results(experiment_name="wigner_characteristic_function_2D")
+            plt.show()
+
         if is_plot_E:
 
             plt.figure(figsize=(10, 10))
@@ -2177,6 +2207,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 plt.title(f"Characteristic function (E)")
             plt.xlabel(r'Re($\alpha$)')
             plt.ylabel(r'Im($\alpha$)')
+
+            self.save_results(experiment_name="wigner_characteristic_function_2D")
+            plt.show()
         
         if is_wo_post_selection:
 
@@ -2188,18 +2221,20 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             pcm = plt.pcolormesh(x, y, data_wo_post_selection, shading='auto', cmap='bwr', vmin = vmin, vmax = vmax)
             plt.colorbar(pcm, label=f'[{self.which_data}] (a.u.)')
             if self.is_wigner_function:
-                plt.title(f"Wigner function (E)")
+                plt.title(f"Wigner function (without post-selection)")
             else:
-                plt.title(f"Characteristic function (E)")
+                plt.title(f"Characteristic function (without post-selection)")
             plt.xlabel(r'Re($\alpha$)')
             plt.ylabel(r'Im($\alpha$)')
+
+            self.save_results(experiment_name="wigner_characteristic_function_2D_wo_post_selection")
+            plt.show()
 
 # In[] without post selection
     def _wigner_characteristic_function_2D(self, average_exponent=12, 
                                     npts_x = 21,
                                     npts_y = 21,
                                     amplitude = 0,
-                                    wait_length = 0,
                                     is_wigner_function=False,
                                     is_coherent_state=False,
                                     is_schrodinger_cat_state=False,
@@ -2209,6 +2244,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                                     beta = 1, # for cat state
                                     qubit_phase = 0,
                                     is_autochunking = False,
+                                    chunk_count = 1,
                                     is_correction = False,
                                     is_plot_simulation=False):
         
@@ -2228,7 +2264,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse,_,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -2307,11 +2343,13 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         with exp_wigner_characteristic_function.acquire_loop_rt(
             uid="shots",
             count=2**average_exponent,
-            averaging_mode=AveragingMode.SINGLE_SHOT,
+            averaging_mode=AveragingMode.CYCLIC,
             acquisition_type=AcquisitionType.INTEGRATION,
             reset_oscillator_phase=True,
         ):
-            with exp_wigner_characteristic_function.sweep(uid="amplitude_sweep", parameter=amplitude_sweep, auto_chunking = is_autochunking, reset_oscillator_phase=True):
+            with exp_wigner_characteristic_function.sweep(uid="amplitude_sweep", parameter=amplitude_sweep,
+                                                          chunk_count = chunk_count,
+                                                          auto_chunking = is_autochunking, reset_oscillator_phase=True):
 
                 if is_coherent_state:
                     displaced_coherent_state()
@@ -2322,37 +2360,20 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 elif is_cat_state:
                     cat_state()
 
-                #### wigner function measurement ####
-                #### post-selection ####
-
-                with exp_wigner_characteristic_function.section(uid="post_measure", play_after="preparation"):
-                    exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
-                    exp_wigner_characteristic_function.acquire(signal="acquire",
-                                            handle="post_selection",
-                                            kernel=readout_weighting_function)
-                
-                with exp_wigner_characteristic_function.section(uid="acquire_delay", length=wait_length, play_after="post_measure"):
-                    exp_wigner_characteristic_function.reserve(signal="acquire")
-                    exp_wigner_characteristic_function.reserve(signal="cavity_drive")
-                    exp_wigner_characteristic_function.reserve(signal="drive")
-
-                # with exp_wigner_characteristic_function.section(uid="wait", length = wait_length, play_after="preparation"):
-                #     exp_wigner_characteristic_function.reserve(signal="cavity_drive")
-                #     exp_wigner_characteristic_function.reserve(signal="drive")
-
+                #### wigner function measurement ###
 
                 if is_wigner_function:
 
                     self.wigner_function(exp=exp_wigner_characteristic_function, cavity_drive_pulse=cavity_drive_pulse, 
                                         pi2_pulse=pi2_pulse, amplitude_sweep=amplitude_sweep, sweep_case=sweep_case,
-                                        prev_uid="acquire_delay")
+                                        prev_uid="preparation")
                 else:
 
                     self.characteristic_function(exp=exp_wigner_characteristic_function,
                                                 pi2_pulse=pi2_pulse, pi_pulse=pi_pulse, 
                                                 cond_disp_pulse=cond_disp_pulse,
                                                 amplitude_sweep=amplitude_sweep, qubit_phase=qubit_phase,
-                                                prev_uid="acquire_delay")
+                                                prev_uid="preparation")
 
                 with exp_wigner_characteristic_function.section(uid="measure", play_after="qubit_excitation_2"):
                     exp_wigner_characteristic_function.play(signal="measure", pulse=readout_pulse, phase=phase)
@@ -2397,10 +2418,10 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         # data = np.average(self.wigner_characteristic_function_data, axis=0, keepdims=False)
 
-        if self.which_data == "I":
-            data = np.real(np.mean(self.wigner_characteristic_function_data, axis = 0))
-        else:
-            data = np.imag(np.mean(self.wigner_characteristic_function_data, axis = 0))
+        # if self.which_data == "I":
+        #     data = np.real(np.mean(self.wigner_characteristic_function_data, axis = 0))
+        # else:
+        #     data = np.imag(np.mean(self.wigner_characteristic_function_data, axis = 0))
 
         # averaged_nums = len(self.cavity_T1_results.acquired_results['cavity_T1'].axis[0])
         # # npts = len(self.T1_results.acquired_results['ac_T1'].axis[1])
@@ -2417,14 +2438,14 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         # data = np.average(data, axis=0, keepdims=False)
 
-        # if self.which_data == "I":
-        #     data = np.real(self.wigner_characteristic_function_data)
-        # else:
-        #     data = np.imag(self.wigner_characteristic_function_data)
+        if self.which_data == "I":
+            data = np.real(self.wigner_characteristic_function_data)
+        else:
+            data = np.imag(self.wigner_characteristic_function_data)
         
 
-        amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[1]
-
+        # amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[1]
+        amplitude_sweep_list = self.wigner_characteristic_function_results.acquired_results['wigner_characteristic_function_measurement'].axis[0]
 
         if self.is_wigner_function:
             Z = amplitude_sweep_list.reshape((self.amp_npts_y, self.amp_npts_x))
@@ -2479,7 +2500,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse,_,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -2616,10 +2637,12 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
 # In[] sideband pulse phase calibration
 
-    def calibrate_sideband_pulse_phase(self, average_exponent=12, sidebands_pulse_length=100e-6, rabi_pulse_length=10e-6,
+    def calibrate_sideband_pulse_phase(self, average_exponent=12, sidebands_pulse_length=100e-6, 
+                                       rabi_pulse_length=10e-6, qubit_drive_detuning_freq = 0e6,
                                        npts_phase_sweep=21,
                                        is_sideband_phase_sweep = True, # else rabi phase sweep
                                        phase_sweep_stop = 2*np.pi,
+                                       rabi_phase = 0,
                                        auto_chunking = False,
                                        is_init_qubit_pi2=False,
                                        is_plot_simulation = False):
@@ -2635,6 +2658,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             "is_init_qubit_pi2": is_init_qubit_pi2,
             "sidebands_pulse_length": sidebands_pulse_length,
             "rabi_pulse_length": rabi_pulse_length,
+            "rabi_phase": rabi_phase,
+            "qubit_drive_detuning_freq": qubit_drive_detuning_freq,
         }
 
         # Define pulses
@@ -2643,30 +2668,52 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
-        
-        cond_disp_pulse, cavity_drive_pulse, sidebands_pulse,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+
+        _, _, sidebands_pulse, sidebands_rise, sidebands_fall, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
+
+        rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+                                                               qubits_component, cavity_component, length=200e-9)
         
-        rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
-                                                length = 200e-9, 
-                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
 
-        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-            def decorator(f):
-                if isinstance(count, (LinearSweepParameter, SweepParameter)):
-                    with exp.match(sweep_parameter=count):
-                        for v in count.values:
-                            with exp.case(v):
-                                for _ in range(int(v)):
-                                    f()
-                                    
-                else:
-                    for _ in range(count):
-                        f()
+        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp, pulse_type, phase_sweep):
+            
+        #     if pulse_type == "sideband":
+        #         ramp_up = sidebands_rise
+        #         ramp_down = sidebands_fall
+        #         signal_line = "cavity_drive"
 
-            return decorator
+        #         # if is_sideband_phase_sweep:
+        #         #     phase_sweep = phase_sweep
+        #         # else:
+        #         #     phase_sweep = self.cavity_parameters[cavity_component]["sideband_phase"]
+
+        #         def decorator(f):
+        #             # exp.play(signal=signal_line, pulse=ramp_up, pulse_parameters={"phase": phase_sweep})
+        #             for _ in range(count):
+        #                 f()
+        #             # exp.play(signal=signal_line, pulse=ramp_down, pulse_parameters={"phase": phase_sweep})
+
+        #     elif pulse_type == "rabi":
+        #         ramp_up = rabi_ramp_up
+        #         ramp_down = rabi_ramp_down
+        #         signal_line = "drive"
+
+        #         if is_sideband_phase_sweep:
+        #             phase_sweep = rabi_phase
+        #         else:
+        #             phase_sweep = phase_sweep   
+
+        #         def decorator(f):
+        #             exp.play(signal=signal_line, pulse=ramp_up, phase = phase_sweep)
+        #             for _ in range(count):
+        #                 f()
+        #             exp.play(signal=signal_line, pulse=ramp_down, phase = phase_sweep)
+
+        #     return decorator
+        
         
         def _xyz(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
             def decorator(f):
@@ -2707,26 +2754,31 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     with exp_sideband_pulse_phase.section(uid="drives", alignment = SectionAlignment.RIGHT):
 
                         with exp_sideband_pulse_phase.section(uid="cavity_sideband_drive"):
-                            @repeat(int(sidebands_pulse_length/cavity_parameters[cavity_component]["sideband_length"]), exp_sideband_pulse_phase)
-                            def play_cavity_drive():
-                                if is_sideband_phase_sweep:
-                                    exp_sideband_pulse_phase.play(signal="cavity_drive", pulse=sidebands_pulse,
-                                                                pulse_parameters={"sideband_phase": phase_sweep}) # I am not sure it is ok
-                                else:
-                                    exp_sideband_pulse_phase.play(signal="cavity_drive", pulse=sidebands_pulse)
+                            # @repeat(int(sidebands_pulse_length/cavity_parameters[cavity_component]["sideband_chunk_length"]), 
+                            #         exp_sideband_pulse_phase, "sideband", phase_sweep)
+                            # def play_cavity_drive():
+                            #     if is_sideband_phase_sweep:
+                            #         exp_sideband_pulse_phase.play(signal="cavity_drive", pulse=sidebands_pulse,
+                            #                                     pulse_parameters={"phase": phase_sweep}) # I am not sure it is ok
+                            #     else:
+                            #         exp_sideband_pulse_phase.play(signal="cavity_drive", pulse=sidebands_pulse)
+                            exp_sideband_pulse_phase.play(signal="cavity_drive", pulse=sidebands_pulse, length = sidebands_pulse_length,
+                                                                pulse_parameters={"phase": phase_sweep})
 
                         with exp_sideband_pulse_phase.section(uid="qubit_drive"):
                             if is_init_qubit_pi2:
                                 exp_sideband_pulse_phase.play(signal="drive", pulse=pi2_pulse)
                             else:
                                 pass
-                            
-                            @repeat(int(rabi_pulse_length/200e-9), exp_sideband_pulse_phase)
-                            def play_qubit_rabi_drive():
-                                if not is_sideband_phase_sweep:
-                                    exp_sideband_pulse_phase.play(signal = "drive", pulse = rabi_drive_chunk, phase = phase_sweep) # I am not sure it is ok
-                                else:
-                                    exp_sideband_pulse_phase.play(signal = "drive", pulse = rabi_drive_chunk)
+
+                            # @repeat(int(rabi_pulse_length/200e-9), exp_sideband_pulse_phase, "rabi", phase_sweep)
+                            # def play_qubit_rabi_drive():
+                            #     if not is_sideband_phase_sweep:
+                            #         exp_sideband_pulse_phase.play(signal = "drive", pulse = rabi_drive_chunk, phase = phase_sweep) # I am not sure it is ok
+                            #     else:
+                            exp_sideband_pulse_phase.play(signal="drive", pulse=rabi_ramp_up, phase = rabi_phase)
+                            exp_sideband_pulse_phase.play(signal = "drive", pulse = rabi_drive_chunk, phase = rabi_phase, length = rabi_pulse_length)
+                            exp_sideband_pulse_phase.play(signal="drive", pulse=rabi_ramp_down, phase = rabi_phase)
 
                     with exp_sideband_pulse_phase.section(uid="xyz", play_after="drives"):
                         @_xyz(xyz_sweep_case, exp=exp_sideband_pulse_phase)
@@ -2747,6 +2799,19 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     with exp_sideband_pulse_phase.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
                         exp_sideband_pulse_phase.reserve(signal="measure")
         
+        exp_calibration = Calibration()
+        # sets the oscillator of the experimental measure signal
+        # for spectroscopy, set the sweep parameter as frequency
+        qubit_drive_oscillator = Oscillator(
+            "qubit_drive_if_osc",
+            frequency=self.qubits_parameters[qubits_component]["ge_freq_IF"] + qubit_drive_detuning_freq,
+        )
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        )
+        exp_sideband_pulse_phase.set_calibration(exp_calibration)
+
+
         signal_map = {
             "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
             "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
@@ -2761,7 +2826,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.simulation_plot(compiled_exp_sideband_pulse_phase, start_time=0, length=20e-6)
             show_pulse_sheet("exp_sideband_pulse_phase", compiled_exp_sideband_pulse_phase)
 
-    def plot_calibrate_sideband_pulse_phase(self, is_normalize=False):
+    def plot_calibrate_sideband_pulse_phase(self, is_normalize=False, is_fig_plot=True):
 
         self.exp_sideband_pulse_phase_data = self.exp_sideband_pulse_phase_results.get_data("sideband_pulse_phase_cal")
 
@@ -2780,7 +2845,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         ############# Plotting the data #####################
 
-        fig, ax = plt.subplots(2, 1, figsize=(20, 12))
+        fig, ax = plt.subplots(1, 1, figsize=(20, 20))
 
         if self.calibrate_sideband_pulse_phase_dict["is_sideband_phase_sweep"]:
             fig.suptitle("sideband phase sweep", fontsize=18)
@@ -2790,24 +2855,31 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         fig.text(0.5, 0.04, f'rabi length:{self.calibrate_sideband_pulse_phase_dict["rabi_pulse_length"]}', ha='center', fontsize=16)
         fig.text(0.5, 0.02, f'sideband length:{self.calibrate_sideband_pulse_phase_dict["sidebands_pulse_length"]}', ha='center', fontsize=16)
 
-        ax[0].plot(phase_sweep_list, data[0], marker='o', linestyle=':', color='k', label='<X>')
-        ax[0].plot(phase_sweep_list, data[1], marker='o', linestyle=':', color='r', label='<Y>')
-        ax[0].plot(phase_sweep_list, data[2], marker='o', linestyle=':', color='b', label='<Z>')
+        ax.plot(phase_sweep_list, data[0], marker='o', linestyle=':', color='k', label='<X>')
+        ax.plot(phase_sweep_list, data[1], marker='o', linestyle=':', color='r', label='<Y>')
+        ax.plot(phase_sweep_list, data[2], marker='o', linestyle=':', color='b', label='<Z>')
         # Add guidelines for ground and excited state values
         if is_normalize:
-            ax[0].axhline(1, color='green', linestyle='--', label='Ground State')
-            ax[0].axhline(-1, color='purple', linestyle='--', label='Excited State')
-            ax[0].set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
+            ax.axhline(1, color='green', linestyle='--', label='Ground State')
+            ax.axhline(-1, color='purple', linestyle='--', label='Excited State')
+            ax.set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
 
-        ax[1].plot(phase_sweep_list, np.sqrt(data[0]**2+data[1]**2+data[2]**2), marker='o', linestyle=':', color='k', label='Purity')
+        ax.plot(phase_sweep_list, np.sqrt(data[0]**2+data[1]**2+data[2]**2), marker='o', linestyle='-', color='m', label='Purity')
 
-        an = ax[0].annotate(f"sideband frequency:{cavity_parameters[cavity_component]['sideband_frequency_l']/1e6} MHz"+'\n'
+        an = ax.annotate(f"sideband frequency:{cavity_parameters[cavity_component]['sideband_frequency_l']/1e6} MHz"+'\n'
                             f"sideband amp_l:{cavity_parameters[cavity_component]['sideband_amp_l']}"+'\n'
                             f"sideband amp_h:{cavity_parameters[cavity_component]['sideband_amp_h']}"+'\n'
-                            f"sideband phase:{cavity_parameters[cavity_component]['sideband_phase']:.2f}",
+                            f"rabi phase:{self.calibrate_sideband_pulse_phase_dict['rabi_phase']:.2f}" + '\n'
+                            f"qubit drive detuning freq:{self.calibrate_sideband_pulse_phase_dict['qubit_drive_detuning_freq']/1e6} MHz" + '\n'
+                            f"rabi drive amp:{self.qubits_parameters[list(self.qubits_parameters.keys())[self.which_qubit]]['rabi_drive_amp']}",
                              xy = (np.average(phase_sweep_list), np.average(data[0])),
                              size = 16)
         an.draggable()
         
-        ax[0].legend()
-        ax[1].legend()
+        ax.legend()
+
+        self.save_results(experiment_name="sideband_phase_sweep")
+        if is_fig_plot:
+            plt.show()
+
+# In[] 

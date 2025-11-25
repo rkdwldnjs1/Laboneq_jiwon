@@ -20,12 +20,13 @@ from laboneq.simple import *
 from laboneq.dsl.experiment.builtins import *
 from laboneq.contrib.example_helpers.plotting.plot_helpers import plot_simulation
 from laboneq.contrib.example_helpers.plotting.plot_helpers import plot_results
+from datetime import datetime
 from laboneq.contrib.example_helpers.randomized_benchmarking_helper import (
     clifford_parametrized,
     generate_play_rb_pulses,
     make_pauli_gate_map,
 )
-from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
+# from laboneq_applications.analysis.fitting_helpers import exponential_decay_fit
 from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect import (
     pulse_update,
 )
@@ -80,6 +81,7 @@ class ZI_QCCS(object):
 
         # create and connect to a LabOne Q session
         self.session = Session(device_setup=self.device_setup)
+        self.session.disconnect()
         self.session.connect(do_emulation=use_emulation)
 
         self.physical_ports = physical_ports
@@ -160,6 +162,10 @@ class ZI_QCCS(object):
                 elif port == "m1_drive":
                     freq = cavity_parameters[sg]["mode_frequency"] - physical_ports["drive"][sg]["freq_LO"]
                     self.cavity_parameters[sg]["m1_freq_IF"] = freq
+
+                elif port == "m2_drive":
+                    freq = cavity_parameters[sg]["mode_frequency"] - physical_ports["drive"][sg]["freq_LO"]
+                    self.cavity_parameters[sg]["m2_freq_IF"] = freq
 
                 else:
                     raise ValueError("Invalid port")
@@ -265,6 +271,7 @@ class ZI_QCCS(object):
                             threshold = physical_ports[port][component]["threshold"],
                             added_outputs = physical_ports[port][component]["added_outputs"],
                             automute = physical_ports[port][component]["automute"],
+                            voltage_offset= physical_ports[port][component]["voltage_offset"],
                         )
 
         device_setup.set_calibration(calibration)
@@ -355,15 +362,18 @@ class ZI_QCCS(object):
         return signal_map
 
 # In[]
-    def continuous_wave(self, is_sideband_pulse = False, average_exponent=19, freq_l=10e6, freq_h=10e6, amp_l=1.0, amp_h=1.0,
+    def continuous_wave(self, is_sideband_pulse = False, average_exponent=19, freq_l=10e6, freq_h=10e6, amp_l=1.0, amp_h=1.0, phase = 0, amp_cont=0.5,
                         is_plot_simulation = False):
 
         device_setup = self.device_setup    
         component = list(self.qubits_parameters.keys())[self.which_qubit]
 
+        cavity_parameters = self.cavity_parameters
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
         drive_pulse = pulse_library.const(uid="drive_pulse", 
                                             length=40e-6, 
-                                            amplitude=1)
+                                            amplitude=amp_cont)
         
         sideband_pulse = pulse_library.sidebands_pulse(uid = "sideband_pulse", 
                                                        length=10e-6,
@@ -371,7 +381,8 @@ class ZI_QCCS(object):
                                                         frequency_h = freq_h,
                                                         amp_l = amp_l,
                                                         amp_h = amp_h,
-                                                        phase = 0)
+                                                        phase = phase)
+        
 
         if is_sideband_pulse:
             pulse = sideband_pulse
@@ -381,7 +392,7 @@ class ZI_QCCS(object):
         exp_cont_wave = Experiment(
                 uid="cont_wave",
                 signals=[
-                    ExperimentSignal(uid="drive"),
+                    ExperimentSignal(uid="cavity_drive"),
                 ],
             )
             
@@ -389,12 +400,12 @@ class ZI_QCCS(object):
             uid="shots",
             count=pow(2, average_exponent),
         ):
-            with exp_cont_wave.section(uid="drive"):
-                exp_cont_wave.play(signal="drive", pulse=pulse)
+            with exp_cont_wave.section(uid="cavity_drive"):
+                exp_cont_wave.play(signal="cavity_drive", pulse=pulse, length= 40e-6)
                 
               
         signal_map = {
-                "drive": device_setup.logical_signal_groups[component].logical_signals["drive"],
+                "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
             }
         
         exp_cont_wave.set_signal_map(signal_map)
@@ -645,6 +656,10 @@ class ZI_QCCS(object):
         plt.xlabel("Time (ns)")
         plt.ylabel("Amplitude (a.u.)")
 
+        self.save_results(experiment_name = "prop_delay_calibration")
+
+        plt.show()
+
 #################### Frequency Domain Measurements #######################################################################################
 # In[]
 
@@ -820,14 +835,39 @@ class ZI_QCCS(object):
                 amplitude=cavity_parameters[cavity_component]["cavity_drive_amp"]
             )
 
+            sideband_att_h = cavity_parameters[cavity_component]["sideband_att_h"]/np.sqrt(cavity_parameters[cavity_component]["sideband_att_h"]**2 + cavity_parameters[cavity_component]["sideband_att_l"]**2)
+            sideband_att_l = cavity_parameters[cavity_component]["sideband_att_l"]/np.sqrt(cavity_parameters[cavity_component]["sideband_att_h"]**2 + cavity_parameters[cavity_component]["sideband_att_l"]**2)
+            
             sidebands_drive_pulse_chunk = pulse_library.sidebands_pulse(
                 uid="sidebands_drive_pulse",
-                length=cavity_parameters[cavity_component]["sideband_length"],
+                length=cavity_parameters[cavity_component]["sideband_chunk_length"],
                 frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
                 frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
-                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*cavity_parameters[cavity_component]["sideband_att_h"]/cavity_parameters[cavity_component]["sideband_att_l"],
-                amp_h=cavity_parameters[cavity_component]["sideband_amp_h"],
+                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
+                amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
+            )
+
+            sidebands_drive_gaussian_rise = pulse_library.sidebands_pulse(
+                uid="sidebands_drive_gaussian_rise",
+                length=cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+                frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
+                frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
+                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
+                amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
+                phase=cavity_parameters[cavity_component]["sideband_phase"],
+                is_gauss_rise = True,
+            )
+
+            sidebands_drive_gaussian_fall = pulse_library.sidebands_pulse(
+                uid="sidebands_drive_gaussian_fall",
+                length=cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+                frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
+                frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
+                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
+                amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
+                phase=cavity_parameters[cavity_component]["sideband_phase"],
+                is_gauss_fall = True,
             )
 
             if length is None:
@@ -842,7 +882,29 @@ class ZI_QCCS(object):
             )
             
 
-            return cond_disp_pulse, cavity_drive_pulse, sidebands_drive_pulse_chunk, cavity_drive_pulse_constant_chunk
+            return cond_disp_pulse, cavity_drive_pulse, sidebands_drive_pulse_chunk, \
+                   sidebands_drive_gaussian_rise, sidebands_drive_gaussian_fall, cavity_drive_pulse_constant_chunk
+        
+        elif type == "rabi":
+
+            rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
+                                                length=length, 
+                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
+            
+            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
+                                                length = length,
+                                                zero_boundaries=True,
+                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
+            
+            rabi_ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
+                                        length=qubits_parameters[qubits_component]["ramp_length"], 
+                                        amplitude=qubits_parameters[qubits_component]["rabi_drive_amp"])
+            
+            rabi_ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
+                                            length=qubits_parameters[qubits_component]["ramp_length"], 
+                                            amplitude=qubits_parameters[qubits_component]["rabi_drive_amp"])
+            
+            return rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down
 
         else:
             raise ValueError("Invalid pulse type. Choose from 'readout', 'qubit_control', or 'cavity_control'.")
@@ -871,3 +933,72 @@ class ZI_QCCS(object):
 
 ################### Time Domain Measurements #################################################################################################
 
+# In[]
+
+    def save_results(self, experiment_name, detail = None):
+
+        from datetime import datetime
+        import os
+
+        now = datetime.now()
+        run_date = now.strftime("%Y%m%d")  # e.g. 20251022
+        run_timestamp = now.strftime("%H%M%S")  # e.g. 20251022_153045
+
+        # simple console log
+
+        save_dir = f"results/{run_date}/{experiment_name}"
+        os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(os.path.join(save_dir, f"{run_timestamp}_{detail}.png"), dpi=300, bbox_inches='tight')
+
+# In[]
+
+    def fourier_transform(self, data, time):
+
+        # time, data 리스트가 이미 주어져 있다고 가정
+        time = np.array(time)    # [us]
+        data = np.array(data)
+
+        # 샘플링 간격 및 FFT 준비
+        dt = time[1] - time[0]              # time step (us)
+        Fs = 1.0 / dt                        # sampling frequency (MHz 단위가 아님!)
+        # time 단위가 us이므로 freq는 MHz 단위가 되도록 보정
+        Fs_MHz = Fs                          # MHz
+
+        # 평균 제거
+        data_detrend = data - np.mean(data)
+
+        # 윈도우 적용 (Hann window)
+        window = np.hanning(len(data))
+        data_win = data_detrend * window
+
+        # FFT 수행
+        fft_vals = np.fft.fft(data_win)
+        fft_freq = np.fft.fftfreq(len(data_win), d=dt)   # [MHz]
+
+        # 양의 주파수 부분만 추출
+        idx = np.where(fft_freq > 0)
+        freqs = fft_freq[idx]
+        amps = np.abs(fft_vals[idx])
+
+        # 가장 큰 두 개의 peak 찾기
+        sorted_indices = np.argsort(amps)[::-1]   # 큰 순서대로 정렬
+        peak1_idx = sorted_indices[0]
+        peak2_idx = sorted_indices[1]
+        peak3_idx = sorted_indices[2]
+        peak4_idx = sorted_indices[3]
+
+        peak1_freq = freqs[peak1_idx]
+        peak2_freq = freqs[peak2_idx]
+        peak3_freq = freqs[peak3_idx]
+        peak4_freq = freqs[peak4_idx]
+        peak1_amp = amps[peak1_idx]
+        peak2_amp = amps[peak2_idx]
+        peak3_amp = amps[peak3_idx]
+        peak4_amp = amps[peak4_idx]
+
+        print(f"1st peak  : {peak1_freq*1e-6:.6f} MHz  (amp={peak1_amp:.3f})")
+        print(f"2nd peak : {peak2_freq*1e-6:.6f} MHz  (amp={peak2_amp:.3f})")
+        print(f"3rd peak  : {peak3_freq*1e-6:.6f} MHz  (amp={peak3_amp:.3f})")
+        print(f"4th peak : {peak4_freq*1e-6:.6f} MHz  (amp={peak4_amp:.3f})")
+
+        return freqs, amps
