@@ -41,24 +41,63 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
 # In[] Time Domain Measurements
 
-    def nopi_pi(self, average_exponent, phase = 0, is_plot_simulation = False):
+    def nopi_pi(self, average_exponent, phase = 0, 
+                readout_pulse_type="gaussian_square", 
+                readout_weighting_type ="gaussian_square", 
+                is_plot_simulation = False):
 
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters 
         component = list(qubits_parameters.keys())[self.which_qubit]
         
         ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
+        if readout_pulse_type == "gaussian_square":
+
+            readout_pulse = pulse_library.gaussian_square(
+                uid="readout_pulse", 
+                length=qubits_parameters[component]["readout_pulse_length"], 
+                amplitude=qubits_parameters[component]["readout_amp"], 
+            )
+
+        elif readout_pulse_type == "drachma":
+            readout_pulse = pulse_library.drachma_readout_pulse(
+                uid="drachma_readout_pulse",
+                length = qubits_parameters[component]["drachma_readout_pulse_length"],
+                amplitude=qubits_parameters[component]["drachma_readout_amp"],
+                kappa=qubits_parameters[component]["readout_kappa"],
+                chi_list=[-qubits_parameters[component]["readout_chi"]/2, qubits_parameters[component]["readout_chi"]/2],
+                zeta_list = [0, 0],
+                amp_trial = 1,
+            )
+
+        if readout_weighting_type == "gaussian_square":
+        
+            readout_weighting_function = pulse_library.gaussian_square(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "const":
+            readout_weighting_function = pulse_library.const(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "drachma":
+            readout_weighting_function = pulse_library.drachma_readout_weighting_pulse(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["drachma_readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "cavity_trajectory":
+            readout_weighting_function = pulse_library.integration_weight_gaussian_const(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                chi=qubits_parameters[component]["readout_chi"],
+                kappa=qubits_parameters[component]["readout_kappa"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        
         drive_pulse = pulse_library.drag(uid="drive_pulse", 
                                              length = qubits_parameters[component]['drive_pulse_length'], 
                                              amplitude = qubits_parameters[component]["drive_amp"],
@@ -151,25 +190,63 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             self.simulation_plot(compiled_experiment_nopi, start_time=0, length=20e-6, component=component)
             self.simulation_plot(compiled_experiment_pi, start_time=0, length=20e-6, component=component)
 
-    def single_shot_nopi_pi(self, npts_exponent, phase = 0, is_plot_simulation = False):
+    def single_shot_nopi_pi(self, npts_exponent, phase = 0,
+                            readout_pulse_type="gaussian_square",
+                            readout_weighting_type ="gaussian_square",
+                            is_plot_simulation = False):
 
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters 
         component = list(qubits_parameters.keys())[self.which_qubit]
         
-        
         ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
+        if readout_pulse_type == "gaussian_square":
+
+            readout_pulse = pulse_library.gaussian_square(
+                uid="readout_pulse", 
+                length=qubits_parameters[component]["readout_pulse_length"], 
+                amplitude=qubits_parameters[component]["readout_amp"], 
+            )
+
+        elif readout_pulse_type == "drachma":
+            readout_pulse = pulse_library.drachma_readout_pulse(
+                uid="drachma_readout_pulse",
+                length = qubits_parameters[component]["drachma_readout_pulse_length"],
+                amplitude=qubits_parameters[component]["drachma_readout_amp"],
+                kappa=qubits_parameters[component]["readout_kappa"],
+                chi_list=[-qubits_parameters[component]["readout_chi"]/2, qubits_parameters[component]["readout_chi"]/2],
+                zeta_list = [0, 0],
+                amp_trial = 1,
+            )
+
+        if readout_weighting_type == "gaussian_square":
+        
+            readout_weighting_function = pulse_library.gaussian_square(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "const":
+            readout_weighting_function = pulse_library.const(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "drachma":
+            readout_weighting_function = pulse_library.drachma_readout_weighting_pulse(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["drachma_readout_integration_length"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+        elif readout_weighting_type == "cavity_trajectory":
+            readout_weighting_function = pulse_library.integration_weight_gaussian_const(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[component]["readout_integration_length"],
+                chi=qubits_parameters[component]["readout_chi"],
+                kappa=qubits_parameters[component]["readout_kappa"],
+                amplitude=qubits_parameters[component]["readout_integration_amp"], 
+            )
+
         drive_pulse = pulse_library.drag(uid="drive_pulse", 
                                              length = qubits_parameters[component]['drive_pulse_length'], 
                                              amplitude = qubits_parameters[component]["drive_amp"],
@@ -561,33 +638,26 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 # In[] T1 Measurement
 
     def T1(self, average_exponent = 12, duration = 100e-6, npts = 101, is_plot_simulation = False):
-
-        device_setup = self.device_setup
-        qubits_parameters = self.qubits_parameters 
-        component = list(qubits_parameters.keys())[self.which_qubit]
         
         self.exp_T1_dict = {
             "duration": duration,
             "npts": npts,
         }
         
-        ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
-        drive_pulse = pulse_library.gaussian(uid="drive_pulse", 
-                                             length = qubits_parameters[component]['drive_pulse_length'], 
-                                             amplitude = qubits_parameters[component]["drive_amp"])
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, 
+                                                                         cavity_parameters, qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
         
-        phase = qubits_parameters[component]["readout_phase"]
+        phase = qubits_parameters[qubits_component]["readout_phase"]
 
         delay_sweep = LinearSweepParameter(uid="delay", start=0, stop=duration, count=npts)
 
@@ -613,7 +683,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ):
                 # qubit drive pulse followed by variable delay
                 with exp_T1.section(uid="qubit_excitation", alignment=SectionAlignment.RIGHT):
-                    exp_T1.play(signal="drive", pulse=drive_pulse)
+                    exp_T1.play(signal="drive", pulse=pi_pulse)
                     exp_T1.delay(signal="drive", time=delay_sweep)
                 # qubit readout pulse and data acquisition
                 with exp_T1.section(uid="qubit_readout", play_after="qubit_excitation"):
@@ -626,11 +696,11 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                         kernel=readout_weighting_function,
                     )
                 # relax time after readout - for signal processing and qubit relaxation to ground state
-                with exp_T1.section(uid="relax", length=qubits_parameters[component]["reset_delay_length"]):
+                with exp_T1.section(uid="relax", length=qubits_parameters[qubits_component]["reset_delay_length"]):
                     exp_T1.reserve(signal="measure")
                 
         
-        signal_map = self.signal_map(component)
+        signal_map = self.signal_map(qubits_component)
         
         exp_T1.set_signal_map(signal_map)
         
@@ -639,7 +709,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         self.T1_results = self.session.run(compiled_experiment_T1)
 
         if is_plot_simulation:
-            self.simulation_plot(compiled_experiment_T1, start_time=0, length=20e-6, component=component)
+            self.simulation_plot(compiled_experiment_T1, start_time=0, length=20e-6, component=qubits_component)
             show_pulse_sheet("T1", compiled_experiment_T1)
     
     def plot_T1(self, is_fit = True):
@@ -697,30 +767,19 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
     def Pi2_cal(self, average_exponent = 12, start = 0, npts = 12, is_plot_simulation = False):
         
         device_setup = self.device_setup
-        qubits_parameters = self.qubits_parameters 
-        component = list(qubits_parameters.keys())[self.which_qubit]
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, 
+                                                                         cavity_parameters, qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
         
-        
-        ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
-        pi2_pulse = pulse_library.drag(
-            uid="drive_pulse", 
-            length = qubits_parameters[component]['pi2_length'], 
-            amplitude = qubits_parameters[component]["pi2_amp"],
-            beta = qubits_parameters[component]["pi2_beta"]
-        )
-        
-        phase = qubits_parameters[component]["readout_phase"]
+        phase = qubits_parameters[qubits_component]["readout_phase"]
 
         pulse_count = LinearSweepParameter(uid="pulses", start = start, stop= start+npts-1, count=npts)
         
@@ -768,10 +827,10 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                         signal="acquire", handle="ac_pi2_cal", kernel=readout_weighting_function
                     )
                 
-                with exp_pi2_cal.section(uid="relax", length=qubits_parameters[component]["reset_delay_length"]):
+                with exp_pi2_cal.section(uid="relax", length=qubits_parameters[qubits_component]["reset_delay_length"]):
                     exp_pi2_cal.reserve(signal="measure")
         
-        signal_map = self.signal_map(component)
+        signal_map = self.signal_map(qubits_component)
         
         exp_pi2_cal.set_signal_map(signal_map)
         
@@ -780,7 +839,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         self.pi2_cal_results = self.session.run(compiled_experiment_pi2_cal)
 
         if is_plot_simulation:
-            self.simulation_plot(compiled_experiment_pi2_cal, start_time=0, length=20e-6, component=component)
+            self.simulation_plot(compiled_experiment_pi2_cal, start_time=0, length=20e-6, component=qubits_component)
             show_pulse_sheet("pi2_cal", compiled_experiment_pi2_cal)
 
     def plot_Pi2_cal(self):
@@ -835,47 +894,39 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
     # In[]            
     def Pi_cal(self, average_exponent = 12, npts = 12, is_plot_simulation = False, is_cond_pulse = False):
         
-        device_setup = self.device_setup
-        qubits_parameters = self.qubits_parameters 
-        component = list(qubits_parameters.keys())[self.which_qubit]
         
         self.is_cond_pulse = is_cond_pulse
-        ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
-        pi2_pulse = pulse_library.drag(
-            uid="pi2_pulse", 
-            length = qubits_parameters[component]['pi2_length'], 
-            amplitude = qubits_parameters[component]["pi2_amp"],
-            beta = qubits_parameters[component]["pi2_beta"]
-        )
+
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, 
+                                                                         cavity_parameters, qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        phase = qubits_parameters[qubits_component]["readout_phase"]
 
         if is_cond_pulse:
             pi_pulse = pulse_library.drag(
                 uid="pi_pulse", 
-                length = qubits_parameters[component]['cond_pi_length'], 
-                amplitude = qubits_parameters[component]["cond_pi_amp"],
-                beta = qubits_parameters[component]["cond_pi_beta"],
+                length = qubits_parameters[qubits_component]['cond_pi_length'], 
+                amplitude = qubits_parameters[qubits_component]["cond_pi_amp"],
+                beta = qubits_parameters[qubits_component]["cond_pi_beta"],
                 conditional=True
             )
         else :
             pi_pulse = pulse_library.drag(
                 uid="pi_pulse", 
-                length = qubits_parameters[component]['pi_length'], 
-                amplitude = qubits_parameters[component]["pi_amp"],
-                beta = qubits_parameters[component]["pi_beta"]
+                length = qubits_parameters[qubits_component]['pi_length'], 
+                amplitude = qubits_parameters[qubits_component]["pi_amp"],
+                beta = qubits_parameters[qubits_component]["pi_beta"]
             )
-
-        phase = qubits_parameters[component]["readout_phase"]
         
         pulse_count = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
         
@@ -924,10 +975,10 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                         signal="acquire", handle="ac_pi_cal", kernel=readout_weighting_function
                     )
                 
-                with exp_pi_cal.section(uid="relax", length=qubits_parameters[component]["reset_delay_length"]):
+                with exp_pi_cal.section(uid="relax", length=qubits_parameters[qubits_component]["reset_delay_length"]):
                     exp_pi_cal.reserve(signal="measure")
         
-        signal_map = self.signal_map(component)
+        signal_map = self.signal_map(qubits_component)
         
         exp_pi_cal.set_signal_map(signal_map)
         
@@ -936,7 +987,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         self.pi_cal_results = self.session.run(compiled_experiment_pi_cal)
 
         if is_plot_simulation:
-            self.simulation_plot(compiled_experiment_pi_cal, start_time=0, length=20e-6, component=component)
+            self.simulation_plot(compiled_experiment_pi_cal, start_time=0, length=20e-6, component=qubits_component)
     
     def plot_Pi_cal(self):
 
@@ -1148,6 +1199,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                average_exponent = 12, duration = 100e-6, npts = 100,
                cavity_freq_detuning = 10e6,
                steady_time = 100e-6,
+               extra_time = 1e-6,
+               delay_after_disp_drive = 0,
                qubit_extra_phase = 0,
                is_constant_drive = True,
                is_sideband_drive = False,
@@ -1225,28 +1278,33 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             count=pow(2, average_exponent),
             averaging_mode=AveragingMode.SINGLE_SHOT,
             acquisition_type=AcquisitionType.INTEGRATION,
-            reset_oscillator_phase = False,
+            reset_oscillator_phase = True,
         ):
             # inner loop - real time sweep of Ramsey time delays
             with exp_ramsey_with_photon.sweep(
-                uid="ramsey_sweep", parameter=time_sweep, alignment=SectionAlignment.LEFT
+                uid="ramsey_sweep", parameter=time_sweep, alignment=SectionAlignment.LEFT, auto_chunking=True,
+                reset_oscillator_phase = True,
             ):
                 # with exp_ramsey_with_photon.section(uid="drive_section", alignment=SectionAlignment.RIGHT):
                 with exp_ramsey_with_photon.section(uid="cavity_drive_1"):
 
                     if is_displacement_drive:
                         exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_pulse)
+                        exp_ramsey_with_photon.delay(signal="cavity_drive", time=delay_after_disp_drive)
                     
                     if is_constant_drive:
-                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant, length = steady_time+duration)
+                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=cavity_drive_constant, length = steady_time+time_sweep+extra_time)
                     elif is_sideband_drive:
-                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=sidebands_pulse, length = steady_time+duration)
+                        exp_ramsey_with_photon.play(signal="cavity_drive", pulse=sidebands_pulse, length = steady_time+time_sweep+extra_time)
                     # 충분히 길게 쏘도록 설정
                     
                 with exp_ramsey_with_photon.section(
                     uid="qubit_excitation", alignment=SectionAlignment.RIGHT
                 ):  
-                    exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length)
+                    if is_displacement_drive:
+                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length+delay_after_disp_drive)
+                    else:
+                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time - qubit_drive_length)
 
                     if is_echo:
                         exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
@@ -1508,13 +1566,17 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
 
 
-    def Ramsey_disp_amp_sweep_with_SB(self, detuning = 0, is_echo = True,
+    def Ramsey_echo_sweep_with_SB(self, detuning = 0, is_echo = True,
                average_exponent = 12, duration = 100e-6, npts = 101,
-               disp_amp_start = 0, disp_amp_stop = 0.1, disp_amp_npts = 11,
+               sweep_start = 0, sweep_stop = 0.1, sweep_npts = 11,
                is_disp_amp_real = True,
                steady_time = 100e-6,
+               delay_after_disp_drive = 0,
+               is_amp_sweep = True,
                is_plot_figure = False,
                is_plot_simulation = False):
+    
+    ## disp_amp_sweep or sideband_phase_sweep
         
         qubits_parameters = self.qubits_parameters
         cavity_parameters = self.cavity_parameters
@@ -1522,7 +1584,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         qubits_component = list(qubits_parameters.keys())[self.which_qubit]
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
 
-        sweep_values = np.linspace(disp_amp_start, disp_amp_stop, disp_amp_npts)
+        sweep_values = np.linspace(sweep_start, sweep_stop, sweep_npts)
 
         if is_disp_amp_real:
             sweep_values = sweep_values 
@@ -1534,9 +1596,12 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         decay_rate_list = []
         decay_rate_err_list = []
 
-        for amp in sweep_values:
+        for value in sweep_values:
             
-            self.cavity_parameters[cavity_component]['cavity_drive_amp'] = amp
+            if is_amp_sweep:
+                self.cavity_parameters[cavity_component]['cavity_drive_amp'] = value
+            else:
+                self.cavity_parameters[cavity_component]['sideband_phase'] = value
 
             self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
                                     duration=duration, npts=npts, detuning=detuning,
@@ -1545,6 +1610,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                                     is_constant_drive = False,
                                     is_sideband_drive = True,
                                     is_displacement_drive = True,
+                                    delay_after_disp_drive = delay_after_disp_drive,
                                     is_plot_simulation=is_plot_simulation)
             
             popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure)
@@ -1566,36 +1632,135 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         else:
             sweep_values = np.imag(sweep_values)
 
-        ax[0].errorbar(np.real(sweep_values), freq_detuning_list, yerr = freq_err_list, fmt = '--or', 
+        ax[0].errorbar(np.round(np.real(sweep_values),3), freq_detuning_list, yerr = freq_err_list, fmt = '--or', 
                        capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
-        ax[1].errorbar(np.real(sweep_values), decay_rate_list, yerr = decay_rate_err_list, fmt = '--or',
+        ax[1].errorbar(np.round(np.real(sweep_values),3), decay_rate_list, yerr = decay_rate_err_list, fmt = '--or',
                        capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
         
-        ax[0].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        if is_amp_sweep:
+            ax[0].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        else:
+            ax[0].set_xlabel("Sideband phase (rad)", fontsize=20)
         
         ax[0].set_ylabel("Frequency detuning (MHz)", fontsize=20)
         ax[0].set_title(f"{cavity_freq_detuning*1e-6}MHz away from center", fontsize=20)
         
         ax[0].legend()
 
-        an = ax[0].annotate(rf'is_disp_amp_real = {is_disp_amp_real}'+'\n'\
-                            +f'sideband_amp = {self.cavity_parameters[cavity_component]["sideband_amp_h"]}' + '\n'\
-                            +f'sideband_phase = {self.cavity_parameters[cavity_component]["sideband_phase"]}',
-                            xy=(0.0, 0.0), xycoords='axes fraction',
-                            fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
-        
+        if is_amp_sweep:
+            an = ax[0].annotate(rf'is_disp_amp_real = {is_disp_amp_real}'+'\n'\
+                                +f'sideband_amp = {self.cavity_parameters[cavity_component]["sideband_amp_h"]}' + '\n'\
+                                +f'sideband_phase = {self.cavity_parameters[cavity_component]["sideband_phase"]}',
+                                xy=(0.0, 0.0), xycoords='axes fraction',
+                                fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
+        else:
+            an = ax[0].annotate(rf'is_disp_amp_real = {is_disp_amp_real}'+'\n'\
+                                +f'sideband_amp = {self.cavity_parameters[cavity_component]["sideband_amp_h"]}' + '\n'\
+                                +f'Disp_amp = {self.cavity_parameters[cavity_component]["cavity_drive_amp"]}',
+                                xy=(0.0, 0.0), xycoords='axes fraction',
+                                fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
         an.draggable()
 
-        ax[1].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        if is_amp_sweep:
+            ax[1].set_xlabel("Displacement Drive amplitude", fontsize=20)
+        else:
+            ax[1].set_xlabel("Sideband phase (rad)", fontsize=20)
+
         ax[1].set_ylabel("Decay rate (MHz)", fontsize=20)
         # ax[1].set_title(f"Center from {cavity_freq_detuning*1e-6}MHz away", fontsize=20)
         ax[0].tick_params(axis='both', which='major', labelsize=16)
         ax[1].tick_params(axis='both', which='major', labelsize=16)
 
-        self.save_results(experiment_name="Ramsey_disp_amp_sweep_with_SB")
+        self.save_results(experiment_name="Ramsey_echo_sweep_with_SB")
 
         plt.show()
 
+
+    def Ramsey_echo_disp_amp_2Dsweep_with_SB(self, detuning = 0, is_echo = True,
+               average_exponent = 12, duration = 100e-6, npts = 101,
+               amp_x_start = 0, amp_x_stop = 0.1, amp_x_npts = 11,
+               amp_y_start = 0, amp_y_stop = 0.1, amp_y_npts = 11,
+               steady_time = 100e-6,
+               delay_after_disp_drive = 0,
+               is_plot_figure = False,
+               is_plot_simulation = False):
+    
+    ## disp_amp_sweep or sideband_phase_sweep
+        
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        real_vals = np.linspace(amp_x_start, amp_x_stop, amp_x_npts) # should not be over unity
+        imag_vals = np.linspace(amp_y_start, amp_y_stop, amp_y_npts) # should not be over unity
+        amplitude_grid = (real_vals[:, None] + 1j * imag_vals[None, :]).T
+        
+        self.amp_npts_x = amp_x_npts
+        self.amp_npts_y = amp_y_npts
+
+        freq_detuning_list = [[None for _ in range(amp_y_npts)] for _ in range(amp_x_npts)]
+
+        freq_err_list = [[None for _ in range(amp_y_npts)] for _ in range(amp_x_npts)]
+
+        decay_rate_list = [[None for _ in range(amp_y_npts)] for _ in range(amp_x_npts)]
+
+        decay_rate_err_list = [[None for _ in range(amp_y_npts)] for _ in range(amp_x_npts)]
+
+        for amp_x_ind in range(0, amp_x_npts):
+            for amp_y_ind in range(0, amp_y_npts):
+            
+                self.cavity_parameters[cavity_component]['cavity_drive_amp'] = amplitude_grid[amp_x_ind][amp_y_ind]
+
+                self.Ramsey_with_photon(is_echo=is_echo, average_exponent=average_exponent,
+                                        duration=duration, npts=npts, detuning=detuning,
+                                        cavity_freq_detuning=0,
+                                        steady_time = steady_time,
+                                        is_constant_drive = False,
+                                        is_sideband_drive = True,
+                                        is_displacement_drive = True,
+                                        delay_after_disp_drive = delay_after_disp_drive,
+                                        is_plot_simulation=is_plot_simulation)
+                
+                popt, popt_err = self.plot_Ramsey(is_ramsey_with_photon=True, is_fit=True, is_plot=is_plot_figure)
+                
+                decay_rate_list[amp_x_ind][amp_y_ind] = popt[2] * 1e-6  # MHz
+
+        decay_rate_2d = np.array(decay_rate_list)
+
+        alpha_grid = np.array(amplitude_grid)
+
+        X = np.real(alpha_grid)
+        Y = np.imag(alpha_grid)
+
+        ### data plot ######################################################################
+
+        cavity_freq_detuning = self.cavity_parameters[cavity_component]['sideband_frequency_l']
+        
+        plt.figure(figsize=(6, 5))
+
+        pcm = plt.pcolormesh(
+            X, Y,
+            decay_rate_2d,
+            shading='auto',
+            cmap='viridis'
+        )
+
+        plt.colorbar(pcm, label=r'Dephasing rate $\Gamma_\phi$ (MHz)')
+        plt.xlabel(r'amp_x')
+        plt.ylabel(r'amp_y')
+        plt.title('Initial state vs T2_echo dephasing rate', fontsize=20)
+
+        plt.tight_layout()
+
+        print(f"sideband_amp:{self.cavity_parameters[cavity_component]['sideband_amp_h']},"+\
+              f"sideband_phase:{self.cavity_parameters[cavity_component]['sideband_phase']}"+\
+              f"sideband_freq: {self.cavity_parameters[cavity_component]['sideband_frequency_l']}")
+
+        self.save_results(experiment_name="Ramsey_echo_disp_amp_2Dsweep_with_SB")
+
+        plt.show()
 
 
     def plot_Ramsey(self, is_ramsey_with_photon = False, is_fit = True, is_plot=True, is_fourier_transform = False):
@@ -1628,13 +1793,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         ### data plot ######################################################################
         if is_fit :
-                sfit1 = sFit('ExpCos', time, data)
-                
-                popt = sfit1._curve_fit()[0]
-                pcov = sfit1._curve_fit()[1]
+            sfit1 = sFit('ExpCos', time, data)
+            
+            popt = sfit1._curve_fit()[0]
+            pcov = sfit1._curve_fit()[1]
 
-                _,freq,decay_rate,_,_ = popt
-                _,freq_err,decay_rate_err,_,_ = np.sqrt(np.diag(pcov))
+            _,freq,decay_rate,_,_ = popt
+            _,freq_err,decay_rate_err,_,_ = np.sqrt(np.diag(pcov))
 
         if is_plot :
 
@@ -1743,6 +1908,207 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         plt.tight_layout()
 
         self.save_results(experiment_name="Long_time_Ramsey")
+        plt.show()
+    
+
+    def RamseyEcho_to_chi(self, detuning = 0,
+               average_exponent = 12, duration = 100e-6, npts = 100,
+               steady_time = 100e-6,
+               wait_time = 1e-6,
+               cavity_freq_start = 0e6, cavity_freq_stop = 0e6, cavity_freq_npts = 21,
+               is_plot_simulation = False):
+
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+
+        drive_pulse_pi2, drive_pulse_pi, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        _, cavity_drive_pulse, sidebands_pulse, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component)
+
+        
+        qubit_drive_length = qubits_parameters[qubits_component]["pi_length"] + qubits_parameters[qubits_component]["pi2_length"]*2
+        
+        cavity_freq_sweep = LinearSweepParameter(uid="mode_freq", start=cavity_freq_start, stop=cavity_freq_stop, count=cavity_freq_npts)
+
+        time_sweep = LinearSweepParameter(uid="time_sweep", start=0, stop=duration - duration/npts, count=npts)
+        
+
+        phase = qubits_parameters[qubits_component]["readout_phase"]
+
+        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(count, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=count):
+                        for v in count.values:
+                            with exp.case(v):
+                                for _ in range(int(v)):
+                                    f()
+                                    
+                else:
+                    for _ in range(count):
+                        f()
+
+            return decorator
+
+        exp_RamseyEcho_to_chi = Experiment(
+                uid="exp_RamseyEcho_to_chi experiment",
+                signals=[
+                    ExperimentSignal("drive"),
+                    ExperimentSignal("measure"),
+                    ExperimentSignal("acquire"),
+                    ExperimentSignal("cavity_drive"),
+                ],
+            )
+
+        with exp_RamseyEcho_to_chi.acquire_loop_rt(
+            uid="shots",
+            count=pow(2, average_exponent),
+            averaging_mode=AveragingMode.CYCLIC,
+            acquisition_type=AcquisitionType.INTEGRATION,
+            reset_oscillator_phase = True,
+        ):
+            # inner loop - real time sweep of Ramsey time delays
+            with exp_RamseyEcho_to_chi.sweep(uid="cavity_freq_sweep", parameter=cavity_freq_sweep, alignment=SectionAlignment.RIGHT):
+                with exp_RamseyEcho_to_chi.sweep(
+                    uid="ramsey_sweep", parameter=time_sweep, alignment=SectionAlignment.LEFT, auto_chunking=True,
+                    reset_oscillator_phase = True,
+                ):
+                    # with exp_ramsey_with_photon.section(uid="drive_section", alignment=SectionAlignment.RIGHT):
+                    with exp_RamseyEcho_to_chi.section(uid="cavity_drive_1"):
+                        
+                        exp_RamseyEcho_to_chi.play(signal="cavity_drive", pulse=cavity_drive_constant, length = steady_time*1.05+time_sweep)
+                        exp_RamseyEcho_to_chi.delay(signal="cavity_drive", time=wait_time)
+                        # 충분히 길게 쏘도록 설정
+                        
+                    with exp_RamseyEcho_to_chi.section(
+                        uid="qubit_excitation", alignment=SectionAlignment.RIGHT
+                    ):  
+                        
+                        exp_RamseyEcho_to_chi.delay(signal="drive", time=steady_time - qubit_drive_length)
+
+                        exp_RamseyEcho_to_chi.play(signal="drive", pulse=drive_pulse_pi2)
+                        exp_RamseyEcho_to_chi.delay(signal="drive", time=time_sweep/2)
+                        exp_RamseyEcho_to_chi.play(signal="drive", pulse=drive_pulse_pi)
+                        exp_RamseyEcho_to_chi.delay(signal="drive", time=time_sweep/2)
+                        exp_RamseyEcho_to_chi.play(signal="drive", 
+                                        pulse=drive_pulse_pi2,
+                                        phase = 2*np.pi*detuning*time_sweep)
+                    
+                    # readout pulse and data acquisition
+                    with exp_RamseyEcho_to_chi.section(
+                        uid="readout_section", play_after="cavity_drive_1"
+                    ):
+                        # play readout pulse on measure line
+                        exp_RamseyEcho_to_chi.play(signal="measure", pulse=readout_pulse, phase = phase)
+                        # trigger signal data acquisition
+                        exp_RamseyEcho_to_chi.acquire(
+                            signal="acquire",
+                            handle="ramseyecho_to_chi",
+                            kernel=readout_weighting_function,
+                        )
+
+                    # relax time after readout - for qubit relaxation to groundstate and signal processing
+                    with exp_RamseyEcho_to_chi.section(uid="relax", length=cavity_parameters[cavity_component]["reset_delay_length"]):
+                        exp_RamseyEcho_to_chi.reserve(signal="measure")
+        
+        exp_calibration = Calibration()
+        
+        cavity_mode_oscillator = Oscillator(
+            "cavity_drive_if_osc",
+            frequency=self.cavity_parameters[cavity_component][f"{cavity_component}_freq_IF"] + cavity_freq_sweep,
+        )
+        exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+            oscillator=cavity_mode_oscillator,
+            automute=True,
+        )
+        exp_RamseyEcho_to_chi.set_calibration(exp_calibration)
+
+        self.exp_calibration = exp_calibration
+
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+            "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+        }
+
+        exp_RamseyEcho_to_chi.set_signal_map(signal_map)
+        compiled_exp_RamseyEcho_to_chi = self.session.compile(exp_RamseyEcho_to_chi)
+        self.exp_RamseyEcho_to_chi_results = self.session.run(compiled_exp_RamseyEcho_to_chi)
+        if is_plot_simulation:
+            self.simulation_plot(compiled_exp_RamseyEcho_to_chi, start_time=0, length=20e-6)
+            show_pulse_sheet("ramsey_with_photon", compiled_exp_RamseyEcho_to_chi)
+
+
+    def plot_RamseyEcho_to_chi(self):
+        
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+    
+        results = self.exp_RamseyEcho_to_chi_results
+        time = results.acquired_results['ramseyecho_to_chi'].axis[1]
+        freq_sweep_list = results.acquired_results['ramseyecho_to_chi'].axis[0]
+
+        self.T2_data = results.get_data("ramseyecho_to_chi")
+
+        if self.which_data == "I":
+            self.ramseyecho_to_chi_data = np.real(results.get_data("ramseyecho_to_chi"))
+        else:
+            self.ramseyecho_to_chi_data = np.imag(results.get_data("ramseyecho_to_chi"))
+
+        ### data processing ######################################################################
+
+        decay_rate_list = []
+        decay_rate_err_list = []
+
+        for i in range(len(freq_sweep_list)):
+
+            data = self.ramseyecho_to_chi_data[i,:]
+
+            sfit1 = sFit('ExpCos', time, data)
+            
+            popt = sfit1._curve_fit()[0]
+            pcov = sfit1._curve_fit()[1]
+
+            _,freq,decay_rate,_,_ = popt
+            _,freq_err,decay_rate_err,_,_ = np.sqrt(np.diag(pcov))
+
+            decay_rate_list.append(decay_rate*1e-6)
+            decay_rate_err_list.append(decay_rate_err*1e-6)
+        
+        ### data plot ######################################################################
+        
+        freq_sweep_list =self.physical_ports["drive"][cavity_component]["freq_LO"] +self.cavity_parameters[cavity_component][f"{cavity_component}_freq_IF"] + freq_sweep_list
+
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+        
+        
+        ax.plot(np.round(np.array(freq_sweep_list)*1e-9, 5), decay_rate_list, marker='o', linestyle='--', markersize=5, mfc=(0,0,1,0.5), mec = (0,0,0,1))
+        # ax.errorbar(np.round(np.array(freq_sweep_list)*1e-9, 5), decay_rate_list, yerr = decay_rate_err_list, fmt = '--or', 
+        #             capsize = 5, markersize = 3, ecolor = 'k', mfc=(1,0,0,0.5), mec = (0,0,0,1))
+    
+        ax.tick_params(axis='both', which='major', labelsize=16)
+
+        ax.set_title(f"Ramsey Echo to chi measurement (amp:{cavity_parameters[cavity_component]['cavity_drive_amp']})", fontsize=20)
+
+        ax.set_xlabel("Frequency (GHz)", fontsize=20)
+        ax.set_ylabel(f'Decay Rate (MHz)', fontsize=20)
+
+        self.save_results(experiment_name="RamseyEcho_to_chi")
         plt.show()
 
 # In[] Rabi
@@ -2474,36 +2840,21 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         AllXY_pulses = self.AllXY_pulses
 
         device_setup = self.device_setup
-        qubits_parameters = self.qubits_parameters 
-        component = list(qubits_parameters.keys())[self.which_qubit]
-        
-        ## define pulses used for experiment
-        readout_pulse = pulse_library.gaussian_square(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
-        # readout integration weights - here simple square pulse, i.e. same weights at all times
-        readout_weighting_function = pulse_library.gaussian_square(
-            uid="readout_weighting_function", 
-            length=qubits_parameters[component]["readout_integration_length"],
-            amplitude=qubits_parameters[component]["readout_integration_amp"], 
-        )
-        pi2_pulse = pulse_library.drag(
-            uid="pi2_pulse", 
-            length = qubits_parameters[component]['pi2_length'], 
-            amplitude = qubits_parameters[component]["pi2_amp"],
-            beta = qubits_parameters[component]["pi2_beta"]
-        )
-        
-        pi_pulse = pulse_library.drag(
-            uid="pi_pulse", 
-            length = qubits_parameters[component]['pi_length'], 
-            amplitude = qubits_parameters[component]["pi_amp"],
-            beta = qubits_parameters[component]["pi_beta"]
-        )
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
 
-        phase = qubits_parameters[component]["readout_phase"]
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, 
+                                                                         cavity_parameters, qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+        
+        phase = qubits_parameters[qubits_component]["readout_phase"]
+
+        component = qubits_component
 
         def label_to_drag_play(name):
                 if name == "I":
@@ -2594,7 +2945,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         if is_plot_simulation:
             self.simulation_plot(compiled_experiment_All_XY, start_time=0, length=20e-6, component=component)
         
-    def plot_All_XY(self):
+    def plot_All_XY(self, is_normalize = True):
 
         self.All_XY_data = self.All_XY_results.get_data("All_XY")
         
@@ -2602,6 +2953,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             data = np.real(self.All_XY_data)
         else:
             data = np.imag(self.All_XY_data)
+
+        if is_normalize:
+            data, e_state, g_state = self.data_to_sigma_z(data)
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
 
@@ -2612,7 +2966,14 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                     [data_min - 0.1*(data_max-data_min), data[grid_n]], linestyle='-', color='b', alpha=0.3)
 
         ax.plot(np.arange(len(self.AllXY_pulses)), data, label='I', marker='o', linestyle=':', color='k')
+
+        if is_normalize:
+            ax.axhline(1, color='green', linestyle='--', label='Ground State')
+            ax.axhline(-1, color='purple', linestyle='--', label='Excited State')
+            ax.set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
         
+        ax.legend()
+
         # x axis labels: AllXY pulses names
         ax.set_xticks(np.arange(len(self.AllXY_pulses)))
         ax.set_xticklabels(self.AllXY_pulses)
@@ -2918,6 +3279,194 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         self.save_results(experiment_name="error_amplification")
         plt.show()
+
+# In[]
+
+    def readout_chi_spectroscopy(self, average_exponent = 12, npts = 12, 
+                                freq_start = -1e6,
+                                freq_stop = 1e6,
+                                is_plot_simulation = False):
+
+        device_setup = self.device_setup
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        # Define pulses
+        readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+
+        pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+                        qubits_component, cavity_component)
+
+        phase = qubits_parameters[qubits_component]["readout_phase"]
+
+        # Sweep parameters
+        freq_sweep = LinearSweepParameter(uid="mode_freq", start=freq_start, stop=freq_stop, count=npts)
+
+        on_off_cases = LinearSweepParameter(uid="on_off_case", start=0, stop=1, count=2)
+    
+        def on_off_qubit_drive(on_off_cases: int | SweepParameter | LinearSweepParameter, exp):
+            def decorator(f):
+                if isinstance(on_off_cases, (LinearSweepParameter, SweepParameter)):
+                    with exp.match(sweep_parameter=on_off_cases):
+                        for v in on_off_cases.values:
+                            with exp.case(v):
+                                f(v)
+
+            return decorator
+
+        # Define the experiment
+        exp_readout_chi_spectroscopy = Experiment(
+            uid="cavity_mode_freq",
+            signals=[
+                ExperimentSignal("drive"),
+                ExperimentSignal("measure"),
+                ExperimentSignal("acquire"),
+            ],
+        )
+
+        with exp_readout_chi_spectroscopy.acquire_loop_rt(
+            uid="shots",
+            count=2**average_exponent,
+            averaging_mode=AveragingMode.SINGLE_SHOT,
+            acquisition_type=AcquisitionType.SPECTROSCOPY,
+        ):
+            with exp_readout_chi_spectroscopy.sweep(uid="sweep_on_off", parameter=on_off_cases):
+                with exp_readout_chi_spectroscopy.sweep(uid="freq_sweep", parameter=freq_sweep, alignment=SectionAlignment.RIGHT, auto_chunking=True):
+                
+                    with exp_readout_chi_spectroscopy.section(uid="qubit_excitation", alignment=SectionAlignment.RIGHT):
+                        
+                        @on_off_qubit_drive(on_off_cases, exp = exp_readout_chi_spectroscopy)
+                        def play_control_drive(on_off_case):
+                            with exp_readout_chi_spectroscopy.section():
+                                if on_off_case == 0:
+                                    pass
+                                else:
+                                    exp_readout_chi_spectroscopy.play(signal="drive", pulse=pi_pulse)
+
+                    with exp_readout_chi_spectroscopy.section(uid="measure", play_after="qubit_excitation"):
+                        exp_readout_chi_spectroscopy.play(signal="measure", pulse=readout_pulse, phase=phase)
+                        exp_readout_chi_spectroscopy.acquire(
+                            signal="acquire",
+                            handle="readout_chi_spectroscopy",
+                            kernel=readout_weighting_function,
+                        )
+                    with exp_readout_chi_spectroscopy.section(uid="relax", 
+                                            length=qubits_parameters[qubits_component]["reset_delay_length"]):
+                        exp_readout_chi_spectroscopy.reserve(signal="measure")
+        
+        exp_calibration = Calibration()
+        # sets the oscillator of the experimental measure signal
+        # for spectroscopy, set the sweep parameter as frequency
+        readout_cavity_mode_oscillator = Oscillator(
+            "readout_cavity_drive_if_osc",
+            frequency=freq_sweep + qubits_parameters[qubits_component]["readout_freq_IF"],
+        )
+        exp_calibration["measure"] = SignalCalibration(oscillator=readout_cavity_mode_oscillator)
+        exp_calibration["acquire"] = SignalCalibration(oscillator=readout_cavity_mode_oscillator)
+
+        exp_readout_chi_spectroscopy.set_calibration(exp_calibration)
+
+        signal_map = {
+            "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+            "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+            "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+        }
+        
+        exp_readout_chi_spectroscopy.set_signal_map(signal_map)
+
+        compiled_experiment_readout_chi_spectroscopy = self.session.compile(exp_readout_chi_spectroscopy)
+
+        self.readout_chi_spectroscopy_results = self.session.run(compiled_experiment_readout_chi_spectroscopy)
+
+        if is_plot_simulation:
+            self.simulation_plot(compiled_experiment_readout_chi_spectroscopy, start_time=0, length=20e-6)
+
+    def plot_readout_chi_spectroscopy(self):
+
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
+
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+
+        ### data processing ###############################################################
+
+        averaged_nums = len(self.readout_chi_spectroscopy_results.acquired_results['readout_chi_spectroscopy'].axis[0])
+        freqs = self.readout_chi_spectroscopy_results.acquired_results['readout_chi_spectroscopy'].axis[2]
+        
+
+        self.readout_chi_spectroscopy_data = self.readout_chi_spectroscopy_results.get_data("readout_chi_spectroscopy") # (2^N, npts) array
+
+        data_mag = np.abs(np.mean(self.readout_chi_spectroscopy_data, axis = 0))
+        data_phase = np.angle(np.mean(self.readout_chi_spectroscopy_data, axis = 0))
+        data_re = np.real(np.mean(self.readout_chi_spectroscopy_data, axis = 0))
+        data_im = np.imag(np.mean(self.readout_chi_spectroscopy_data, axis = 0))
+        std_data_re = np.real(np.std(self.readout_chi_spectroscopy_data, axis = 0)/np.sqrt(averaged_nums))
+        std_data_im = np.imag(np.std(self.readout_chi_spectroscopy_data, axis = 0)/np.sqrt(averaged_nums))
+
+        std_data_mag = np.sqrt( (data_re*std_data_re)**2 + (data_im*std_data_im)**2 ) / data_mag
+        std_data_phase = np.sqrt( (data_im*std_data_re)**2 + (data_re*std_data_im)**2 ) / (data_mag)**2
+
+        freq_sweep_list = self.physical_ports["measure"]["freq_LO"] + qubits_parameters[qubits_component]["readout_freq_IF"] + freqs
+        
+        # Find and annotate the minimum
+        min_idx_g = np.argmin(data_mag[0][:])
+        min_freq_g = np.array(freq_sweep_list)[min_idx_g] * 1e-9
+        min_value_g = data_mag[0][min_idx_g]
+
+        min_idx_e = np.argmin(data_mag[1][:])
+        min_freq_e = np.array(freq_sweep_list)[min_idx_e] * 1e-9
+        min_value_e = data_mag[1][min_idx_e]
+
+        print(rf"chi_ge/2$\pi$ = {(min_freq_e - min_freq_g)*1e3} MHz")
+        print(rf"center_freq = {(min_freq_e + min_freq_g)/2} GHz")
+        
+        ### data plot ######################################################################
+
+        fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+
+        fig.suptitle(f"Readout cavity chi spectroscopy", fontsize=24)
+
+        ax[0].errorbar(np.round(np.array(freq_sweep_list)*1e-9, 7), data_mag[0][:], yerr = std_data_mag[0][:], fmt = '--or', 
+                    capsize = 5, markersize = 3, ecolor = 'b', mfc=(1,0,0,0.5), mec = (0,0,0,1), label = 'g')
+        ax[0].errorbar(np.round(np.array(freq_sweep_list)*1e-9, 7), data_mag[1][:], yerr = std_data_mag[1][:], fmt = '--or', 
+                    capsize = 5, markersize = 3, ecolor = 'r', mfc=(1,0,0,0.5), mec = (0,0,0,1), label = 'e')
+        ax[0].plot(min_freq_g, min_value_g, 'g*', markersize=15)
+        ax[0].plot(min_freq_e, min_value_e, 'r*', markersize=15)
+
+        ax[0].tick_params(axis='both', which='major', labelsize=20)
+        ax[0].tick_params(axis='both', which='minor', labelsize=15)
+
+        ax[0].set_xlabel("Freq", fontsize=20)
+        ax[0].set_ylabel(f"Magnitude", fontsize=20)
+        ax[0].legend()
+
+        ax[1].errorbar(np.round(np.array(freq_sweep_list)*1e-9, 7), data_phase[0][:], yerr = std_data_phase[0][:], fmt = '--or', 
+                    capsize = 5, markersize = 3, ecolor = 'b', mfc=(1,0,0,0.5), mec = (0,0,0,1), label = 'g')
+        ax[1].errorbar(np.round(np.array(freq_sweep_list)*1e-9, 7), data_phase[1][:], yerr = std_data_phase[1][:], fmt = '--or', 
+                    capsize = 5, markersize = 3, ecolor = 'r', mfc=(1,0,0,0.5), mec = (0,0,0,1), label = 'e')
+
+        ax[1].tick_params(axis='both', which='major', labelsize=20)
+        ax[1].tick_params(axis='both', which='minor', labelsize=15)
+
+        ax[1].set_xlabel("Freq", fontsize=20)
+        ax[1].set_ylabel(f"Phase", fontsize=20)
+        ax[1].legend()
+
+        self.save_results(experiment_name="readout_chi_spectroscopy")
+        plt.show()
+
+
+
+
+
+
+
+
 
 # In[] CR Calibration
 
@@ -3269,3 +3818,145 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ax[0].legend()
         ax[1].legend()
         ax[2].legend()
+
+
+# In[] 동시에 두 가지 이상의 freq sweep이 안됨..
+
+    # def CKP(self,average_exponent = 12, 
+    #         ro_cavity_drive_length = 2e-6,
+    #         cavity_freq_start = 0e6, cavity_freq_stop = 0e6, cavity_freq_npts = 21,
+    #         qubit_freq_start = 0e6, qubit_freq_stop = 0e6, qubit_freq_npts = 21,
+    #         is_plot_simulation = False):
+
+    #     device_setup = self.device_setup
+    #     qubits_parameters = self.qubits_parameters
+    #     cavity_parameters = self.cavity_parameters
+
+    #     qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+    #     next_qubit_component = list(qubits_parameters.keys())[(self.which_qubit + 1)]
+    #     cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        
+    #     # Define pulses
+    #     readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
+    #                     qubits_component, cavity_component)
+
+    #     drive_pulse_pi2, drive_pulse_pi, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
+    #                     qubits_component, cavity_component)
+        
+    #     cond_disp_pulse, cavity_drive_pulse, _, _, _, cavity_constant_drive = self.pulse_generator("cavity_control", 
+    #                                                                            qubits_parameters, cavity_parameters,
+    #                                                                            qubits_component, cavity_component)
+        
+
+    #     phase = qubits_parameters[qubits_component]["readout_phase"]
+
+    #     sweep_case_1 = LinearSweepParameter(uid="on_off_case", start=0, stop=1, count=2)
+
+    #     # Sweep parameters
+    #     cavity_freq_sweep = LinearSweepParameter(uid="mode_freq", start=cavity_freq_start, stop=cavity_freq_stop, count=cavity_freq_npts)
+    #     qubit_freq_sweep = LinearSweepParameter(uid="mode_freq", start=qubit_freq_start, stop=qubit_freq_stop, count=qubit_freq_npts)
+
+    #     def on_off_pi_pulse(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
+    #         def decorator(f):
+    #             if isinstance(sweep_case, (LinearSweepParameter, SweepParameter)):
+    #                 with exp.match(sweep_parameter=sweep_case):
+    #                     for v in sweep_case.values:
+    #                         with exp.case(v):
+    #                             f(v)
+
+    #         return decorator
+
+    #     exp_CKP = Experiment(
+    #         uid="CKP experiment",
+    #         signals=[
+    #             ExperimentSignal("drive"),
+    #             ExperimentSignal("drive_sweep"),
+    #             ExperimentSignal("measure"),
+    #             ExperimentSignal("acquire"),
+    #             ExperimentSignal("cavity_drive"),
+    #         ],
+    #     )
+    #     with exp_CKP.acquire_loop_rt(
+    #         uid="shots",
+    #         count=pow(2, average_exponent),
+    #         averaging_mode=AveragingMode.CYCLIC,
+    #         acquisition_type=AcquisitionType.INTEGRATION,
+    #     ):   
+    #         with exp_CKP.sweep(uid="on_off_sweep", parameter=sweep_case_1, alignment=SectionAlignment.RIGHT):
+    #             # with exp_CKP.sweep(uid="cavity_freq_sweep", parameter=cavity_freq_sweep, alignment=SectionAlignment.RIGHT):
+    #             with exp_CKP.sweep(uid="qubit_freq_sweep", parameter=qubit_freq_sweep, alignment=SectionAlignment.RIGHT, auto_chunking=True):
+
+    #                 with exp_CKP.section(uid="on_off_pi_pulse", alignment=SectionAlignment.RIGHT):
+                        
+    #                     @on_off_pi_pulse(sweep_case_1, exp=exp_CKP)
+    #                     def on_off_pi_pulse(v):
+    #                         if v == 0:
+    #                             pass
+    #                         elif v == 1:
+    #                             exp_CKP.play(signal="drive", pulse=drive_pulse_pi)
+
+    #                 with exp_CKP.section(
+    #                     uid="drive_sweep_zone", alignment=SectionAlignment.LEFT, play_after="on_off_pi_pulse"
+    #                 ):  
+    #                     exp_CKP.play(signal="cavity_drive", pulse=cavity_constant_drive, length = ro_cavity_drive_length)
+    #                     exp_CKP.delay(signal="drive_sweep", time = ro_cavity_drive_length*3/4)
+    #                     exp_CKP.play(signal="drive_sweep", pulse=drive_pulse_pi)
+
+
+    #                 # readout pulse and data acquisition
+    #                 with exp_CKP.section(
+    #                     uid="readout_section", play_after="drive_sweep_zone"
+    #                 ):
+    #                     # play readout pulse on measure line
+    #                     exp_CKP.play(signal="measure", pulse=readout_pulse, phase = phase)
+    #                     # trigger signal data acquisition
+    #                     exp_CKP.acquire(
+    #                         signal="acquire",
+    #                         handle="CKP",
+    #                         kernel=readout_weighting_function,
+    #                     )
+
+    #                 # relax time after readout - for qubit relaxation to groundstate and signal processing
+    #                 with exp_CKP.section(uid="relax", length=qubits_parameters[qubits_component]["reset_delay_length"]):
+    #                     exp_CKP.reserve(signal="measure")
+            
+    #     exp_calibration = Calibration()
+    #     # sets the oscillator of the experimental measure signal
+    #     # for spectroscopy, set the sweep parameter as frequency
+    #     # readout_cavity_oscillator = Oscillator(
+    #     #     "cavity_drive_if_osc",
+    #     #     frequency=cavity_freq_sweep,
+    #     # )
+    #     qubit_oscillator = Oscillator(
+    #         "qubit_drive_if_osc",
+    #         frequency=qubit_freq_sweep,
+    #     )
+
+    #     # exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+    #     #     oscillator=readout_cavity_oscillator
+    #     # )
+
+    #     exp_calibration["drive_sweep"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+    #         oscillator=qubit_oscillator
+    #     )
+
+    #     exp_CKP.set_calibration(exp_calibration)
+
+    #     signal_map = {
+    #         "drive": device_setup.logical_signal_groups[qubits_component].logical_signals["drive"],
+    #         "drive_sweep": device_setup.logical_signal_groups[next_qubit_component].logical_signals["drive"],
+    #         "measure": device_setup.logical_signal_groups[qubits_component].logical_signals["measure"],
+    #         "acquire": device_setup.logical_signal_groups[qubits_component].logical_signals["acquire"],
+    #         "cavity_drive": device_setup.logical_signal_groups[cavity_component].logical_signals["cavity_drive_line"],
+    #     }
+        
+    #     exp_CKP.set_signal_map(signal_map)
+
+    #     compiled_experiment_CKP = self.session.compile(exp_CKP)
+
+    #     self.CKP_results = self.session.run(compiled_experiment_CKP)
+
+    #     if is_plot_simulation:
+    #         self.simulation_plot(compiled_experiment_CKP, start_time=0, length=20e-6)
+
+# In[]

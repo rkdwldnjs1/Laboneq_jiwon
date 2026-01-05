@@ -27,7 +27,9 @@ class sFit():
         self.ydata = ydata
         self.t0 = xdata[0]
         self.delta_t = np.diff(xdata)[0]
-        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and (self.fit_type != 'ExpCos') and (self.fit_type != 'ExpExp') and (self.fit_type != 'Gaussian') and (self.fit_type != 'GaussianCos') and (self.fit_type != 'Storage_Characterization'):
+        if (self.fit_type != 'Cos') and (self.fit_type != 'Exp') and \
+        (self.fit_type != 'ExpCos') and (self.fit_type != 'ExpExp') and (self.fit_type != 'Gaussian') \
+        and (self.fit_type != 'GaussianCos') and (self.fit_type != 'Storage_Characterization') and (self.fit_type !='Poly2'):
             raise Exception("No such a type!")
         
         func = self.fit_function()
@@ -56,6 +58,8 @@ class sFit():
             return self.GaussianCos
         elif self.fit_type == 'Storage_Characterization':
             return self.Storage_Characterization
+        elif self.fit_type == 'Poly2':
+            return self.Poly2
         
     def _curve_fit(self):
         return curve_fit(self.func, self.xdata, self.ydata, p0 = self.initial_guess, maxfev=10000)
@@ -201,8 +205,8 @@ class sFit():
         
     def Line(self, x, a, b):
         return (a*x + b).astype(np.float64)
-    def Poly2(x, a, b, c):
-        return (a*x**2 + b*x + c).astype(np.float64)
+    def Poly2(self, x, a, c):
+        return (a*x**2 + c).astype(np.float64)
     def Exp(self, t, A, gamma, offset): # 3 args
         return (A*exp(-t*gamma) + offset - A/2).astype(np.float64)
     def Cos(self, t, A, f, delta, offset): # 4 args

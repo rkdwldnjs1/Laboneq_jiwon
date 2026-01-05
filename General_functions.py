@@ -5,6 +5,8 @@ import numpy as np
 from pathlib import Path
 import time as time_module
 import scipy.optimize
+import qutip as qt
+from scipy.optimize import minimize
 
 import sys
 sys.path.append("D:/Software/SHFQC/")
@@ -45,7 +47,8 @@ class ZI_QCCS(object):
                  use_emulation,
                  multiplex_drive_lines = True,
                  cr_drive_lines = True,
-                 is_memory_mode = True,):
+                 is_memory_mode = True,
+                 is_cavity_trajectory_weighting_function = False):
 
         # specify the number of qubits you want to use
 
@@ -80,7 +83,7 @@ class ZI_QCCS(object):
         use_emulation = use_emulation
 
         # create and connect to a LabOne Q session
-        self.session = Session(device_setup=self.device_setup)
+        self.session = Session(device_setup=self.device_setup, server_log=True)
         self.session.disconnect()
         self.session.connect(do_emulation=use_emulation)
 
@@ -95,6 +98,8 @@ class ZI_QCCS(object):
         self.which_qubit = which_qubit # which qubit to use "0 is 'q0', 1 is 'q1' and so on."
         self.which_mode = which_mode
         self.which_data = which_data # which data to use "I" or "Q"
+
+        self.is_cavity_trajectory_weighting_function = is_cavity_trajectory_weighting_function
 
         self.device_setup_calibration()
 
@@ -471,7 +476,7 @@ class ZI_QCCS(object):
         
     # %% propagation delay calibration for readout line
 
-    def prop_delay_calibration(self, line, average_exponent):
+    def prop_delay_calibration(self, line, average_exponent, readout_pulse_type = "const"):
 
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
@@ -481,11 +486,25 @@ class ZI_QCCS(object):
         
         
         ## define pulses used for experiment
-        readout_pulse = pulse_library.const(
-            uid="readout_pulse", 
-            length=qubits_parameters[component]["readout_pulse_length"], 
-            amplitude=qubits_parameters[component]["readout_amp"], 
-        )
+
+        if readout_pulse_type == "const":
+
+            readout_pulse = pulse_library.const(
+                uid="readout_pulse", 
+                length=qubits_parameters[component]["readout_pulse_length"], 
+                amplitude=qubits_parameters[component]["readout_amp"], 
+            )
+
+        elif readout_pulse_type == "drachma":
+            readout_pulse = pulse_library.drachma_readout_pulse(
+                uid="drachma_readout_pulse",
+                length = qubits_parameters[component]["readout_pulse_length"],
+                amplitude=qubits_parameters[component]["readout_amp"],
+                kappa=qubits_parameters[component]["readout_kappa"],
+                chi_list=[-qubits_parameters[component]["readout_chi"]/2, qubits_parameters[component]["readout_chi"]/2],
+                zeta_list = [0, 0],
+            )
+
         # readout integration weights - here simple square pulse, i.e. same weights at all times
         readout_weighting_function = pulse_library.const(
             uid="readout_weighting_function", 
@@ -785,13 +804,42 @@ class ZI_QCCS(object):
                 amplitude=qubits_parameters[qubits_component]["readout_amp"]
             )
 
-            readout_weighting_function = pulse_library.gaussian_square(
-                uid="readout_weighting_function",
-                length=qubits_parameters[qubits_component]["readout_integration_length"],
-                amplitude=qubits_parameters[qubits_component]["readout_integration_amp"]
-            )
+            if self.is_cavity_trajectory_weighting_function:
+
+                readout_weighting_function = pulse_library.integration_weight_gaussian_const(
+                    uid="readout_weighting_function", 
+                    length=qubits_parameters[qubits_component]["readout_integration_length"],
+                    chi=qubits_parameters[qubits_component]["readout_chi"],
+                    kappa=qubits_parameters[qubits_component]["readout_kappa"],
+                    amplitude=qubits_parameters[qubits_component]["readout_integration_amp"], 
+                )
+            else:
+                readout_weighting_function = pulse_library.gaussian_square(
+                    uid="readout_weighting_function",
+                    length=qubits_parameters[qubits_component]["readout_integration_length"],
+                    amplitude=qubits_parameters[qubits_component]["readout_integration_amp"]
+                )
 
             return readout_pulse, readout_weighting_function
+        
+        elif type == "special_readout":
+
+            drachma_readout_pulse = pulse_library.drachma_readout_pulse(
+                uid="drachma_readout_pulse",
+                length = qubits_parameters[qubits_component]["drachma_readout_pulse_length"],
+                amplitude=qubits_parameters[qubits_component]["drachma_readout_amp"],
+                kappa=qubits_parameters[qubits_component]["readout_kappa"],
+                chi_list=[-qubits_parameters[qubits_component]["readout_chi"]/2, qubits_parameters[qubits_component]["readout_chi"]/2],
+                zeta_list = [0,0],
+            )
+
+            drachma_readout_weighting_function = pulse_library.drachma_readout_weighting_pulse(
+                uid="readout_weighting_function", 
+                length=qubits_parameters[qubits_component]["drachma_readout_integration_length"],
+                amplitude=qubits_parameters[qubits_component]["readout_integration_amp"], 
+            )
+
+            return drachma_readout_pulse, drachma_readout_weighting_function
         
         elif type == "qubit_control":
 
@@ -846,6 +894,7 @@ class ZI_QCCS(object):
                 amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
                 amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
+                extra_phase = cavity_parameters[cavity_component]["sideband_extra_phase"],
             )
 
             sidebands_drive_gaussian_rise = pulse_library.sidebands_pulse(
@@ -1002,3 +1051,150 @@ class ZI_QCCS(object):
         print(f"4th peak : {peak4_freq*1e-6:.6f} MHz  (amp={peak4_amp:.3f})")
 
         return freqs, amps
+    
+# In[] Density matrix reconstruction toolkits
+
+# Refer to Conditional-NOT Displacement: Fast Multioscillator Control with a Single Qubit (Appendix F8)
+
+    # Characteristic function 계산
+    def compute_char(self, rho, grid, N):
+        chi = np.zeros_like(grid, dtype=np.complex128)
+        a = qt.destroy(N)
+        for i in range(grid.shape[0]):
+            for j in range(grid.shape[1]):
+                D = qt.displace(N, grid[i, j])
+                chi[i, j] = (rho * D).tr()
+        return chi
+    
+    def precompute_displacements(self, alphas: np.ndarray, N: int):
+        """
+        Precompute D(alpha) as QuTiP operators for all alpha on the grid.
+        This greatly speeds up the cost evaluation, since D(alpha) creation is expensive.
+        """
+        a = qt.destroy(N)
+        D_ops = [qt.displace(N, complex(alpha)) for alpha in alphas]
+        return D_ops
+    
+    # Density matrix parametrization from theta (upper-triangular T)
+    def rho_from_theta_upper(self, theta, N):
+        # cholesky method with upper-triangular T
+
+        T = np.zeros((N, N), dtype=np.complex128)
+        idx = 0
+        # diagonal > 0
+        for i in range(N):
+            T[i, i] = np.exp(theta[idx])
+            idx += 1
+        # strictly upper (i < j)
+        for i in range(N):
+            for j in range(i+1, N):
+                T[i, j] = theta[idx] + 1j*theta[idx+1]
+                idx += 2
+        rho = T.conj().T @ T
+        rho /= np.trace(rho)
+        return qt.Qobj(rho, dims=[[N],[N]])
+    
+    # Initial theta0 from given rho_init (for initial guess of minimization)
+    def theta0_from_rho_init(self, rho_init, N, eps=1e-8):
+        """
+        rho_init: QuTiP Qobj or numpy (NxN). Returns theta0 for rho_from_theta_upper().
+        Adds eps*I/N regularization to make it PD.
+        """
+        rho_np = rho_init.full() if hasattr(rho_init, "full") else np.array(rho_init, dtype=np.complex128)
+        # make Hermitian (numerical safety)
+        rho_np = 0.5 * (rho_np + rho_np.conj().T)
+        # regularize to be strictly PD
+        rho_reg = (1 - eps) * rho_np + eps * np.eye(N) / N
+        # Cholesky: rho = L L† (L lower)
+        L = np.linalg.cholesky(rho_reg)
+        # Then rho = (L†)† (L†) = T† T with T = L† (UPPER)
+        T0 = L.conj().T
+        # extract theta (upper-triangular convention)
+        theta = []
+        for i in range(N):
+            theta.append(np.log(np.real(T0[i, i])))
+        for i in range(N):
+            for j in range(i+1, N):
+                theta.append(np.real(T0[i, j]))
+                theta.append(np.imag(T0[i, j]))
+        return np.array(theta, dtype=float)
+
+    # TODO : sigma value 추가
+
+    # def cost_qutip_upper(theta, D_ops, G_meas, N):
+    #     rho = rho_from_theta_upper(theta, N)
+    #     res = 0.0
+    #     for D, g in zip(D_ops, G_meas):
+    #         pred = (D * rho).tr()
+    #         res += (abs(pred - g)**2)
+    #     return float(np.real(res))
+    
+    def cost_numpy(self, theta, D_mats, G_meas, N):
+        # rho from theta (numpy로)
+        T = np.zeros((N, N), dtype=np.complex128)
+        idx = 0
+        for i in range(N):
+            T[i, i] = np.exp(theta[idx]); idx += 1
+        for i in range(N):
+            for j in range(i+1, N):  # upper 컨벤션 예시
+                T[i, j] = theta[idx] + 1j*theta[idx+1]
+                idx += 2
+        rho = T.conj().T @ T
+        rho /= np.trace(rho)
+        # pred_k = Tr[D_k rho] for all k at once
+        preds = np.einsum('kij,ji->k', D_mats, rho)   # D_mats : (K,N,N), rho : (N,N) -> preds : (K,) = (D_k)_ij * rho_ji 
+        r = (preds - G_meas)
+        return float(np.real(np.vdot(r, r)))          # sum |r|^2
+
+    def density_matrix_reconstruction(self, N, rho_init, data, x_grid, y_grid, maxiter=2000, maxfun=200000):
+
+        theta0 = self.theta0_from_rho_init(rho_init, N=N) # initial guess
+
+        X, Y = np.meshgrid(x_grid, y_grid)
+        alphas = (X + 1j * Y).ravel()
+
+        # Precompute D(alpha) operators 
+        D_ops = self.precompute_displacements(alphas, N)
+        D_mats = np.stack([D.full() for D in D_ops], axis=0)
+
+        res = minimize(
+            self.cost_numpy,
+            theta0,  
+            args=(D_mats, data, N), # data should be 1D
+            method="L-BFGS-B",
+            options={"maxiter": maxiter, "maxfun": maxfun}
+        )
+        print("success:", res.success)
+        print("message:", res.message)
+        print("number of iterations:", res.nit)
+        reconstruncted_rho = self.rho_from_theta_upper(res.x, N)
+        print("trace(rho) =", reconstruncted_rho.tr())
+
+        return reconstruncted_rho
+    
+    def plot_characteristic_function(self, grid_x, grid_y, rho):
+
+        alpha_x , alpha_y = np.meshgrid(grid_x, grid_y)
+        
+        characteristic_func = self.compute_char(rho, alpha_x + 1j * alpha_y, rho.shape[0])
+
+        plt.figure(figsize=(12, 5))
+        plt.pcolormesh(grid_x, grid_y, np.real(characteristic_func), cmap='bwr', vmin = -1, vmax=1)
+        
+        plt.colorbar(label='|χ(ξ)|')
+        plt.xlabel('Re(ξ)')
+        plt.ylabel('Im(ξ)')
+        plt.title('Characteristic Function (Real Part)')
+        plt.gca().set_aspect('equal')
+
+        self.save_results(experiment_name="characteristic_reconstructed_rho")
+
+        plt.show()
+    
+    def state_fidelity(self, rho_ideal, rho):
+        """Compute the fidelity between two density matrices rhos."""
+
+        print("state fidelity:", qt.metrics.fidelity(rho_ideal, rho))
+
+        return qt.metrics.fidelity(rho_ideal, rho)
+        
