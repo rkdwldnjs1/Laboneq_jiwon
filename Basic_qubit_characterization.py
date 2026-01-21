@@ -441,11 +441,33 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         nopi_hist_data = ax[1,1].hist(nopi_data, bins = num_of_bins, color = "b", alpha = 0.5)
         pi_hist_data = ax[1,1].hist(pi_data, bins = num_of_bins, color = "r", alpha = 0.5)
 
-        self.nopi_value = np.mean(nopi_data)
-        self.pi_value = np.mean(pi_data)
+        #####
 
-        ax[1,1].plot([np.mean(nopi_data), np.mean(nopi_data)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '-k')
-        ax[1,1].plot([np.mean(pi_data), np.mean(pi_data)], [0, max([max(nopi_hist_data[0]),max(pi_hist_data[0])]) + 5], '--k')
+        ground_state = np.mean(nopi_data)
+        excited_state = np.mean(pi_data)
+
+        nopi_h = max(nopi_hist_data[0])
+        pi_h = max(pi_hist_data[0])
+
+        init_guess_1 = [nopi_h, ground_state, 0.1, 0, excited_state, 0.1]
+
+        popt1, pcov1 = scipy.optimize.curve_fit(self.double_gaussian, nopi_hist_data[1][:-1], nopi_hist_data[0], p0=init_guess_1)
+        ax[1,1].plot(nopi_hist_data[1][:-1], self.double_gaussian(nopi_hist_data[1][:-1], *popt1), color = "b", alpha = 0.5, label = "nopi_fit")
+        ax[1,1].plot([popt1[1],popt1[1]], [0, nopi_h], color = "k", linestyle = "--", alpha = 0.5)
+        ax[1,1].plot([ground_state,ground_state], [0, nopi_h], color = "k", linestyle = "-", alpha = 1)
+
+        init_guess_2 = [pi_h*0.2, ground_state, 0.1, pi_h, excited_state, 0.1]
+
+        popt2, pcov2 = scipy.optimize.curve_fit(self.double_gaussian, pi_hist_data[1][:-1], pi_hist_data[0], p0=init_guess_2)
+        ax[1,1].plot(pi_hist_data[1][:-1], self.double_gaussian(pi_hist_data[1][:-1], *popt2), color = "r", alpha = 0.5, label = "pi_fit")
+        ax[1,1].plot([popt2[4],popt2[4]], [0, pi_h], color = "k", linestyle = "--", alpha = 0.5)
+        ax[1,1].plot([excited_state,excited_state], [0, pi_h], color = "k", linestyle = "-", alpha = 1)
+
+        # self.nopi_value = np.mean(popt1[1])
+        # self.pi_value = np.mean(popt2[4])
+
+        self.nopi_value = ground_state
+        self.pi_value = excited_state
 
         ax[1,1].tick_params(axis='both', which='major', labelsize=10)
 
@@ -457,46 +479,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         an2 = ax[1,1].annotate((f'Fidelity = {fdlty:.3f}'), xy = (np.average(nopi_data), max(nopi_hist_data[0])))
         an2.draggable()
 
+        print(f"Thermal population : {min(popt1[0]/(popt1[3]+popt1[0]), popt1[3]/(popt1[0]+popt1[3]))}")
+        print(f"residual population : {min(popt2[0]/(popt2[3]+popt2[0]), popt2[3]/(popt2[0]+popt2[3]))}")
+
         self.save_results(experiment_name="nopi_pi_plot")
 
         plt.show()
 
-        if is_gaussian_fit:
-
-            ground_state = np.mean(nopi_data)
-            excited_state = np.mean(pi_data)
-
-            nopi_h = max(nopi_hist_data[0])
-            pi_h = max(pi_hist_data[0])
-
-            plt.figure()
-            plt.plot(nopi_hist_data[1][:-1], nopi_hist_data[0], color = "b", alpha = 0.5, label = "nopi")
-            plt.plot(pi_hist_data[1][:-1], pi_hist_data[0], color = "r", alpha = 0.5, label = "pi")
-
-            init_guess_1 = [nopi_h, ground_state, 0.1, 0, excited_state, 0.1]
-
-            popt1, pcov1 = scipy.optimize.curve_fit(self.double_gaussian, nopi_hist_data[1][:-1], nopi_hist_data[0], p0=init_guess_1)
-            plt.plot(nopi_hist_data[1][:-1], self.double_gaussian(nopi_hist_data[1][:-1], *popt1), color = "b", alpha = 0.5, label = "nopi_fit")
-            plt.plot([popt1[1],popt1[1]], [0, nopi_h], color = "b", linestyle = "--", alpha = 0.5)
-
-            init_guess_2 = [pi_h*0.2, ground_state, 0.1, pi_h, excited_state, 0.1]
-
-            popt2, pcov2 = scipy.optimize.curve_fit(self.double_gaussian, pi_hist_data[1][:-1], pi_hist_data[0], p0=init_guess_2)
-            plt.plot(pi_hist_data[1][:-1], self.double_gaussian(pi_hist_data[1][:-1], *popt2), color = "r", alpha = 0.5, label = "pi_fit")
-            plt.plot([popt2[4],popt2[4]], [0, pi_h], color = "r", linestyle = "--", alpha = 0.5)
-            # plt.annotate(f"ground state value :{popt1[1]:.2f}", xy = (popt1[1], nopi_h))
-            # plt.annotate(f"excited state value :{popt2[4]:.2f}", xy = (popt2[4], pi_h))
-
-            print(f"nopi : {popt1}")
-            print(f"pi : {popt2}")
-            print(f"Thermal population : {min(popt1[0]/(popt1[3]+popt1[0]), popt1[3]/(popt1[0]+popt1[3]))}")
-            print(f"residual population : {min(popt2[0]/(popt2[3]+popt2[0]), popt2[3]/(popt2[0]+popt2[3]))}")
-
-            plt.legend()
-
-            self.save_results(experiment_name="nopi_pi_plot")
-
-            plt.show()
 
     def test_consecutive_measurements(self, npts_exponent, phase = 0, acquire_delay = 0,
                                       first_amp = 0,
@@ -1498,7 +1487,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         an2 = ax[0].annotate(r"$\frac{\epsilon}{2\pi} = aV$"+'\n'\
                              + f"a={a:.4f} MHz/V",
-                             xy=(0.0, 0.1), xycoords='axes fraction',
+                             xy=(0.0, 0.3), xycoords='axes fraction',
                              fontsize=12, ha='center', va='center', bbox=dict(boxstyle="round", fc="w"))
 
         an2.draggable()
@@ -1772,11 +1761,11 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         if is_ramsey_with_photon:
             results = self.ramsey_with_photon_results
-            time = results.acquired_results['ramsey'].axis[1]
+            time = results.acquired_results['ramsey'].axis[1][0]
 
         else :
             results = self.ramsey_results
-            time = results.acquired_results['ramsey'].axis[1]
+            time = results.acquired_results['ramsey'].axis[1][0]
 
         averaged_nums = len(results.acquired_results['ramsey'].axis[0])
         # npts = len(self.T1_results.acquired_results['ac_T1'].axis[1])
@@ -2377,31 +2366,31 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
         
-        rabi_drive_chunk, rabi_drive, ramp_up, ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+        rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
                                                                qubits_component, cavity_component, length = duration)
 
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
 
         
-        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-            def decorator(f):
-                if isinstance(count, (LinearSweepParameter, SweepParameter)):
-                    with exp.match(sweep_parameter=count):
-                        for v in count.values:
-                            with exp.case(v):
-                                if v == 0:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    exp.play(signal="drive", pulse=ramp_down)
-                                else:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    for _ in range(int(v)):
-                                        f()
-                                    exp.play(signal="drive", pulse=ramp_down)
-                else:
-                    for _ in range(count):
-                        f()
+        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+        #     def decorator(f):
+        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
+        #             with exp.match(sweep_parameter=count):
+        #                 for v in count.values:
+        #                     with exp.case(v):
+        #                         if v == 0:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #                         else:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             for _ in range(int(v)):
+        #                                 f()
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #         else:
+        #             for _ in range(count):
+        #                 f()
 
-            return decorator
+        #     return decorator
         
         if is_single_shot :
             averaging_mode = AveragingMode.SINGLE_SHOT
@@ -2431,16 +2420,20 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 
                 with exp_rabi_length_with_photon.section(uid="cavity_drive_1"):
                     # @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
-                    @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_with_photon) # 2e-6 extra time
-                    def play_cavity_drive():
-                        exp_rabi_length_with_photon.play(signal="cavity_drive", pulse=sidebands_pulse)
-                    # 충분히 길게 쏘도록 설정
+                    # @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_with_photon) # 2e-6 extra time
+                    # def play_cavity_drive():
+                    exp_rabi_length_with_photon.play(signal="cavity_drive", 
+                                                     pulse=sidebands_pulse, 
+                                                     length = start_time+duration+steady_time + qubits_parameters[qubits_component]["ramp_length"]*2)
 
                 with exp_rabi_length_with_photon.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
                     
                     exp_rabi_length_with_photon.delay(signal="drive", time=steady_time)
                     
-                    exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
+                    exp_rabi_length_with_photon.play(signal="drive", pulse=rabi_ramp_up)
+                    exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive_chunk, length = start_time+rabi_length_sweep*(duration/npts))
+                    exp_rabi_length_with_photon.play(signal="drive", pulse=rabi_ramp_down)
+                    # exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
 
                 # readout pulse and data acquisition
                 with exp_rabi_length_with_photon.section(uid="readout_section", play_after="rabi_drives"):
@@ -2755,7 +2748,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             show_pulse_sheet("rabi_spin_locking", compiled_experiment_rabi)
 
 
-    def plot_Rabi_length_spin_locking(self, is_normalize = True):
+    def plot_Rabi_length_spin_locking(self, is_normalize = True, is_xyz_plot = True, is_purity_plot = False):
         
     ### data processing ###############################################################
         self.rabi_length_spin_locking_data = self.rabi_length_spin_locking_results.get_data("rabi_length_spin_locking")
@@ -2765,7 +2758,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         else:
             data = np.imag(self.rabi_length_spin_locking_data)
         
-        rabi_length_sweep_list = self.rabi_length_spin_locking_results.acquired_results['rabi_length_spin_locking'].axis[0]
+        rabi_length_sweep_list = self.rabi_length_spin_locking_results.acquired_results['rabi_length_spin_locking'].axis[0][0]
 
         if self.exp_Rabi_length_spin_locking_dict["duration"] > 2e-6:
             time = rabi_length_sweep_list * self.exp_Rabi_length_spin_locking_dict["duration"]/self.exp_Rabi_length_spin_locking_dict["npts"]
@@ -2780,9 +2773,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
-        ax.plot(time*1e6, data[:,0], color="r", marker="o", linestyle = '--', markeredgecolor='black', label = 'X')
-        ax.plot(time*1e6, data[:,1], color="g", marker="o", linestyle = '--', markeredgecolor='black', label = 'Y')
-        ax.plot(time*1e6, data[:,2], color="b", marker="o", linestyle = '--', markeredgecolor='black', label = 'Z')
+        if is_xyz_plot:
+            ax.plot(time*1e6, data[:,0], color="r", marker="o", linestyle = '--', markeredgecolor='black', label = 'X')
+            ax.plot(time*1e6, data[:,1], color="g", marker="o", linestyle = '--', markeredgecolor='black', label = 'Y')
+            ax.plot(time*1e6, data[:,2], color="b", marker="o", linestyle = '--', markeredgecolor='black', label = 'Z')
+        if is_purity_plot:
+            ax.plot(time*1e6, np.sqrt(data[:,0]**2 + data[:,1]**2 + data[:,2]**2), color="purple", marker="o", linestyle = '--', markeredgecolor='black', label = 'purity')
+        
         ax.set_title("Rabi_length_spin_locking measurement", fontsize=20)
         ax.set_xlabel("Time (us)", fontsize=20)
 
@@ -3396,7 +3393,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         ### data processing ###############################################################
 
         averaged_nums = len(self.readout_chi_spectroscopy_results.acquired_results['readout_chi_spectroscopy'].axis[0])
-        freqs = self.readout_chi_spectroscopy_results.acquired_results['readout_chi_spectroscopy'].axis[2]
+        freqs = self.readout_chi_spectroscopy_results.acquired_results['readout_chi_spectroscopy'].axis[2][0]
         
 
         self.readout_chi_spectroscopy_data = self.readout_chi_spectroscopy_results.get_data("readout_chi_spectroscopy") # (2^N, npts) array

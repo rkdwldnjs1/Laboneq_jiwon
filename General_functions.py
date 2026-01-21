@@ -765,8 +765,8 @@ class ZI_QCCS(object):
 
     def hist_fidelity(self, hist1, hist2):
 
-        mean1 = np.mean(hist1)
-        mean2 = np.mean(hist2)
+        mean1 = self.nopi_value
+        mean2 = self.pi_value
         thresh = np.mean([mean1, mean2])
         fdlty=1
         
@@ -1129,7 +1129,7 @@ class ZI_QCCS(object):
     #         res += (abs(pred - g)**2)
     #     return float(np.real(res))
     
-    def cost_numpy(self, theta, D_mats, G_meas, N):
+    def cost_numpy(self, theta, D_mats, G_meas, sigmas, N):
         # rho from theta (numpy로)
         T = np.zeros((N, N), dtype=np.complex128)
         idx = 0
@@ -1143,10 +1143,35 @@ class ZI_QCCS(object):
         rho /= np.trace(rho)
         # pred_k = Tr[D_k rho] for all k at once
         preds = np.einsum('kij,ji->k', D_mats, rho)   # D_mats : (K,N,N), rho : (N,N) -> preds : (K,) = (D_k)_ij * rho_ji 
-        r = (preds - G_meas)
+        r = (preds - G_meas) / sigmas   
         return float(np.real(np.vdot(r, r)))          # sum |r|^2
+    
+    def cost_numpy_re_im(self, theta, D_mats, G_meas_re, G_meas_im,
+                    sig_re, sig_im, N):
+        # --- rho from theta (upper convention) ---
+        T = np.zeros((N, N), dtype=np.complex128)
+        idx = 0
+        for i in range(N):
+            T[i, i] = np.exp(theta[idx]); idx += 1
+        for i in range(N):
+            for j in range(i+1, N):
+                T[i, j] = theta[idx] + 1j*theta[idx+1]
+                idx += 2
 
-    def density_matrix_reconstruction(self, N, rho_init, data, x_grid, y_grid, maxiter=2000, maxfun=200000):
+        rho = T.conj().T @ T
+        rho /= np.trace(rho)
+
+        # --- preds_k = Tr[D_k rho] for all k ---
+        preds = np.einsum('kij,ji->k', D_mats, rho)  # (K,)
+
+        # --- residuals for Re/Im separately ---
+        r_re = (np.real(preds) - G_meas_re[0]) / sig_re[0]
+        r_im = (np.imag(preds) - G_meas_im[0]) / sig_im[0]
+
+        # sum of squares
+        return float(np.dot(r_re, r_re) + np.dot(r_im, r_im))
+
+    def density_matrix_reconstruction(self, N, rho_init, data, sigmas, x_grid, y_grid, maxiter=2000, maxfun=200000):
 
         theta0 = self.theta0_from_rho_init(rho_init, N=N) # initial guess
 
@@ -1160,7 +1185,35 @@ class ZI_QCCS(object):
         res = minimize(
             self.cost_numpy,
             theta0,  
-            args=(D_mats, data, N), # data should be 1D
+            args=(D_mats, data, sigmas,N), # data should be 1D
+            method="L-BFGS-B",
+            options={"maxiter": maxiter, "maxfun": maxfun}
+        )
+        print("success:", res.success)
+        print("message:", res.message)
+        print("number of iterations:", res.nit)
+        reconstruncted_rho = self.rho_from_theta_upper(res.x, N)
+        print("trace(rho) =", reconstruncted_rho.tr())
+
+        return reconstruncted_rho
+    
+    def density_matrix_reconstruction_re_im(self, N, rho_init, data_re, data_im, sigmas_re, sigmas_im, 
+                                            x_grid, y_grid, 
+                                            maxiter=2000, maxfun=200000):
+
+        theta0 = self.theta0_from_rho_init(rho_init, N=N) # initial guess
+
+        X, Y = np.meshgrid(x_grid, y_grid)
+        alphas = (X + 1j * Y).ravel()
+
+        # Precompute D(alpha) operators 
+        D_ops = self.precompute_displacements(alphas, N)
+        D_mats = np.stack([D.full() for D in D_ops], axis=0)
+
+        res = minimize(
+            self.cost_numpy_re_im,
+            theta0,  
+            args=(D_mats, data_re, data_im, sigmas_re, sigmas_im, N), # data should be 1D
             method="L-BFGS-B",
             options={"maxiter": maxiter, "maxfun": maxfun}
         )
@@ -1187,10 +1240,20 @@ class ZI_QCCS(object):
         plt.title('Characteristic Function (Real Part)')
         plt.gca().set_aspect('equal')
 
-        self.save_results(experiment_name="characteristic_reconstructed_rho")
+        self.save_results(experiment_name="characteristic_reconstructed_rho", detail="real_part")
+
+        plt.figure(figsize=(12, 5))
+        plt.pcolormesh(grid_x, grid_y, np.imag(characteristic_func), cmap='bwr', vmin = -1, vmax=1)
+        plt.colorbar(label='|χ(ξ)|')
+        plt.xlabel('Re(ξ)')
+        plt.ylabel('Im(ξ)')
+        plt.title('Characteristic Function (Imaginary Part)')
+        plt.gca().set_aspect('equal')
+
+        self.save_results(experiment_name="characteristic_reconstructed_rho", detail="imag_part")
 
         plt.show()
-    
+
     def state_fidelity(self, rho_ideal, rho):
         """Compute the fidelity between two density matrices rhos."""
 
