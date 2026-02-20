@@ -940,17 +940,18 @@ class ZI_QCCS(object):
                                                 length=length, 
                                                 amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
             
-            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
-                                                length = length,
-                                                zero_boundaries=True,
+            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse",
+                                                width = length,
+                                                length = length + 2*qubits_parameters[qubits_component]["rabi_ramp_length"],
+                                                zero_boundaries=False,
                                                 amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
             
             rabi_ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
-                                        length=qubits_parameters[qubits_component]["ramp_length"], 
+                                        length=qubits_parameters[qubits_component]["rabi_ramp_length"], 
                                         amplitude=qubits_parameters[qubits_component]["rabi_drive_amp"])
             
             rabi_ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
-                                            length=qubits_parameters[qubits_component]["ramp_length"], 
+                                            length=qubits_parameters[qubits_component]["rabi_ramp_length"], 
                                             amplitude=qubits_parameters[qubits_component]["rabi_drive_amp"])
             
             return rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down

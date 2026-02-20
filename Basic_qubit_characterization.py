@@ -69,6 +69,12 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 zeta_list = [0, 0],
                 amp_trial = 1,
             )
+        elif readout_pulse_type == "const":
+            readout_pulse = pulse_library.const(
+                uid="readout_pulse", 
+                length=qubits_parameters[component]["readout_pulse_length"],
+                amplitude=qubits_parameters[component]["readout_amp"], 
+            )
 
         if readout_weighting_type == "gaussian_square":
         
@@ -217,6 +223,12 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 chi_list=[-qubits_parameters[component]["readout_chi"]/2, qubits_parameters[component]["readout_chi"]/2],
                 zeta_list = [0, 0],
                 amp_trial = 1,
+            )
+        elif readout_pulse_type == "const":
+            readout_pulse = pulse_library.const(
+                uid="readout_pulse", 
+                length=qubits_parameters[component]["readout_pulse_length"],
+                amplitude=qubits_parameters[component]["readout_amp"], 
             )
 
         if readout_weighting_type == "gaussian_square":
@@ -1293,7 +1305,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                     if is_displacement_drive:
                         exp_ramsey_with_photon.delay(signal="drive", time=steady_time-qubit_drive_length+delay_after_disp_drive)
                     else:
-                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time - qubit_drive_length)
+                        exp_ramsey_with_photon.delay(signal="drive", time=steady_time)
 
                     if is_echo:
                         exp_ramsey_with_photon.play(signal="drive", pulse=drive_pulse_pi2)
@@ -2220,47 +2232,56 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         )
         
         
-        if duration > 2e-6 :
+        # if duration > 2e-6 :
 
-            rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
-                                                length = duration/npts, 
+        #     rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
+        #                                         length = duration/npts, 
+        #                                         amplitude = qubits_parameters[component]["rabi_drive_amp"])
+        
+        # else :
+
+        rabi_drive = pulse_library.gaussian_square(uid="drive_pulse",
+                                                width = duration,
+                                                length = duration + 2*qubits_parameters[component]["rabi_ramp_length"],
+                                                zero_boundaries=False,
                                                 amplitude = qubits_parameters[component]["rabi_drive_amp"])
         
-        else :
-
-            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
-                                                length = duration, 
+        rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
+                                                length=duration, 
                                                 amplitude = qubits_parameters[component]["rabi_drive_amp"])
-
-        ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
-                                        length=qubits_parameters[component]["ramp_length"], 
-                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
-        ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
-                                        length=qubits_parameters[component]["ramp_length"], 
-                                        amplitude=qubits_parameters[component]["rabi_drive_amp"])
+        
+        rabi_ramp_up = pulse_library.gaussian_rise(uid="ramp_up", 
+                                        length=qubits_parameters[component]["rabi_ramp_length"], 
+                                        amplitude=qubits_parameters[component]["rabi_drive_amp"],
+                                        zero_boundaries=False)
+            
+        rabi_ramp_down = pulse_library.gaussian_fall(uid="ramp_down", 
+                                            length=qubits_parameters[component]["rabi_ramp_length"], 
+                                            amplitude=qubits_parameters[component]["rabi_drive_amp"],
+                                            zero_boundaries=False)
         
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
 
         
-        def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-            def decorator(f):
-                if isinstance(count, (LinearSweepParameter, SweepParameter)):
-                    with exp.match(sweep_parameter=count):
-                        for v in count.values:
-                            with exp.case(v):
-                                if v == 0:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    exp.play(signal="drive", pulse=ramp_down)
-                                else:
-                                    exp.play(signal="drive", pulse=ramp_up)
-                                    for _ in range(int(v)):
-                                        f()
-                                    exp.play(signal="drive", pulse=ramp_down)
-                else:
-                    for _ in range(count):
-                        f()
+        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
+        #     def decorator(f):
+        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
+        #             with exp.match(sweep_parameter=count):
+        #                 for v in count.values:
+        #                     with exp.case(v):
+        #                         if v == 0:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #                         else:
+        #                             exp.play(signal="drive", pulse=ramp_up)
+        #                             for _ in range(int(v)):
+        #                                 f()
+        #                             exp.play(signal="drive", pulse=ramp_down)
+        #         else:
+        #             for _ in range(count):
+        #                 f()
 
-            return decorator
+        #     return decorator
         
         if is_single_shot :
             averaging_mode = AveragingMode.SINGLE_SHOT
@@ -2288,15 +2309,14 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_rabi_length.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 with exp_rabi_length.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
 
-                    if duration > 2e-6 :
+                    exp_rabi_length.play(signal="drive", pulse = rabi_ramp_up)
+                    exp_rabi_length.play(signal="drive", pulse = rabi_drive_chunk,
+                                         length = start_time + rabi_length_sweep*(duration/npts))
+                    exp_rabi_length.play(signal="drive", pulse = rabi_ramp_down)
 
-                        @repeat(rabi_length_sweep, exp_rabi_length)
-                        def play_rabi():
-                            exp_rabi_length.play(signal = "drive", 
-                                                pulse = rabi_drive_chunk)
-                    
-                    else :
-                        exp_rabi_length.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
+
+                    # exp_rabi_length.play(signal = "drive", pulse = rabi_drive, 
+                    #                      length = start_time+rabi_length_sweep*(duration/npts)+2*qubits_parameters[component]["rabi_ramp_length"])
                                              
                 # readout pulse and data acquisition
                 with exp_rabi_length.section(uid="readout_section", play_after="rabi_drives"):
@@ -2418,22 +2438,23 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             
             with exp_rabi_length_with_photon.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 
-                with exp_rabi_length_with_photon.section(uid="cavity_drive_1"):
+                with exp_rabi_length_with_photon.section(uid="cavity_drive_1", alignment=SectionAlignment.LEFT):
                     # @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
                     # @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_with_photon) # 2e-6 extra time
                     # def play_cavity_drive():
                     exp_rabi_length_with_photon.play(signal="cavity_drive", 
                                                      pulse=sidebands_pulse, 
-                                                     length = start_time+duration+steady_time + qubits_parameters[qubits_component]["ramp_length"]*2)
+                                                     length = start_time+rabi_length_sweep*(duration/npts)+steady_time+
+                                                     2*qubits_parameters[qubits_component]["rabi_ramp_length"])
 
-                with exp_rabi_length_with_photon.section(uid="rabi_drives", alignment=SectionAlignment.RIGHT):
+                with exp_rabi_length_with_photon.section(uid="rabi_drives", alignment=SectionAlignment.LEFT):
                     
                     exp_rabi_length_with_photon.delay(signal="drive", time=steady_time)
                     
-                    exp_rabi_length_with_photon.play(signal="drive", pulse=rabi_ramp_up)
-                    exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive_chunk, length = start_time+rabi_length_sweep*(duration/npts))
-                    exp_rabi_length_with_photon.play(signal="drive", pulse=rabi_ramp_down)
-                    # exp_rabi_length_with_photon.play(signal = "drive", pulse = rabi_drive, length = start_time+rabi_length_sweep*(duration/npts))
+                    exp_rabi_length_with_photon.play(signal="drive", pulse = rabi_ramp_up)
+                    exp_rabi_length_with_photon.play(signal="drive", pulse = rabi_drive_chunk,
+                                         length = start_time + rabi_length_sweep*(duration/npts))
+                    exp_rabi_length_with_photon.play(signal="drive", pulse = rabi_ramp_down)
 
                 # readout pulse and data acquisition
                 with exp_rabi_length_with_photon.section(uid="readout_section", play_after="rabi_drives"):
@@ -2479,7 +2500,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             show_pulse_sheet("rabi", compiled_experiment_rabi)
 
 
-    def plot_Rabi_length(self, is_fit = True):
+    def plot_Rabi_length(self, is_normalize = True, is_fit = True):
         
         if self.is_single_shot:
         ### data processing ###############################################################
@@ -2517,6 +2538,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 data = np.real(self.rabi_length_data)
             else:
                 data = np.imag(self.rabi_length_data)
+            
+            if is_normalize:
+                data, e_state, g_state = self.data_to_sigma_z(data)
 
             time = np.linspace(self.exp_Rabi_length_dict["start_time"], 
                                self.exp_Rabi_length_dict["start_time"]+self.exp_Rabi_length_dict["duration"], 
@@ -2527,6 +2551,11 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
             ax.plot(time*1e6, data, color="r", marker="o", linestyle = '--', markeredgecolor='black')
+
+            if is_normalize:
+                ax.axhline(1, color='green', linestyle='--', label='Ground State')
+                ax.axhline(-1, color='purple', linestyle='--', label='Excited State')
+                ax.set_ylabel(r'$\langle \sigma_z \rangle$', fontsize=16)
 
         if is_fit :
             sfit1 = sFit('ExpCos', time, data)
@@ -2549,7 +2578,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ax.tick_params(axis='both', which='major', labelsize=16)
             ax.set_title("Rabi_length measurement", fontsize=20)
             ax.set_xlabel("Time (us)", fontsize=20)
-            ax.set_ylabel(f'{self.which_data} (a.u.)', fontsize=20)
 
         self.save_results(experiment_name="Rabi_length")
         plt.show()
@@ -2589,21 +2617,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
         
-        rabi_drive_chunk, rabi_drive, ramp_up, ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+        rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
                                                                qubits_component, cavity_component, length = duration)
-        
 
-        if duration > 2e-6 :
-
-            rabi_drive_chunk = pulse_library.const(uid="drive_pulse", 
-                                                length = duration/npts, 
-                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
-        
-        else :
-
-            rabi_drive = pulse_library.gaussian_square(uid="drive_pulse", 
-                                                length = duration, 
-                                                amplitude = qubits_parameters[qubits_component]["rabi_drive_amp"])
         
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
 
@@ -2689,18 +2705,20 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                         
                         # else :
                         with exp_rabi_length_spin_locking.section(uid="qubit_rabi_drive"):
-                            exp_rabi_length_spin_locking.play(signal = "drive", pulse = rabi_drive, 
-                                                            length = start_time+rabi_length_sweep*(duration/npts),
-                                                            phase = rabi_phase)
+
+                            exp_rabi_length_spin_locking.play(signal="drive", pulse = rabi_ramp_up, phase = rabi_phase)
+                            exp_rabi_length_spin_locking.play(signal="drive", pulse = rabi_drive_chunk,
+                                                length = start_time + rabi_length_sweep*(duration/npts), phase = rabi_phase)
+                            exp_rabi_length_spin_locking.play(signal="drive", pulse = rabi_ramp_down, phase = rabi_phase)
                      
                     
                     with exp_rabi_length_spin_locking.section(uid="xyz", play_after="rabi_drives"):
                         @_xyz(xyz_sweep_case, exp=exp_rabi_length_spin_locking)
                         def play_drive(v):
                             if v == 0: # X
-                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = 0)
+                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = np.pi)
                             elif v == 1: # Y
-                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = np.pi/2)
+                                exp_rabi_length_spin_locking.play(signal="drive", pulse=pi2_pulse, phase = -np.pi/2)
                             elif v == 2: # Z
                                 pass
 
