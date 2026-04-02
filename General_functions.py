@@ -794,7 +794,7 @@ class ZI_QCCS(object):
 
 # In[]
     def pulse_generator(self, type, qubits_parameters, cavity_parameters, 
-                        qubits_component, cavity_component, length = None, npts = None):
+                        qubits_component, cavity_component, length = 0, npts = 1):
 
         if type == "readout":
 
@@ -899,13 +899,16 @@ class ZI_QCCS(object):
 
             sidebands_drive_gaussian_rise = pulse_library.sidebands_pulse(
                 uid="sidebands_drive_gaussian_rise",
-                length=cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+                length= cavity_parameters[cavity_component]["sideband_rise_fall_length"],
                 frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
                 frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
                 amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
                 amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
+                extra_phase = cavity_parameters[cavity_component]["sideband_extra_phase"],
                 is_gauss_rise = True,
+                rise_width = cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+                t_offset = 0,
             )
 
             sidebands_drive_gaussian_fall = pulse_library.sidebands_pulse(
@@ -916,10 +919,26 @@ class ZI_QCCS(object):
                 amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
                 amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
                 phase=cavity_parameters[cavity_component]["sideband_phase"],
+                extra_phase = cavity_parameters[cavity_component]["sideband_extra_phase"],
                 is_gauss_fall = True,
+                rise_width = cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+                t_offset = cavity_parameters[cavity_component]["sideband_rise_fall_length"] + length,
             )
 
-            if length is None:
+            sidebands_drive_const = pulse_library.sidebands_pulse(
+                uid="sidebands_drive_const",
+                length=length,
+                frequency_l=cavity_parameters[cavity_component]["sideband_frequency_l"],
+                frequency_h=cavity_parameters[cavity_component]["sideband_frequency_h"],
+                amp_l=cavity_parameters[cavity_component]["sideband_amp_l"]*sideband_att_h,
+                amp_h=cavity_parameters[cavity_component]["sideband_amp_h"]*sideband_att_l,
+                phase=cavity_parameters[cavity_component]["sideband_phase"],
+                extra_phase = cavity_parameters[cavity_component]["sideband_extra_phase"],
+                rise_width = None,
+                t_offset = cavity_parameters[cavity_component]["sideband_rise_fall_length"],
+            )
+
+            if length == 0:
                 length = cavity_parameters[cavity_component]["cavity_drive_length"]
             else :
                 length = length/npts
@@ -932,7 +951,7 @@ class ZI_QCCS(object):
             
 
             return cond_disp_pulse, cavity_drive_pulse, sidebands_drive_pulse_chunk, \
-                   sidebands_drive_gaussian_rise, sidebands_drive_gaussian_fall, cavity_drive_pulse_constant_chunk
+                   sidebands_drive_gaussian_rise, sidebands_drive_gaussian_fall, sidebands_drive_const, cavity_drive_pulse_constant_chunk
         
         elif type == "rabi":
 

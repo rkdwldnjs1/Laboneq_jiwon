@@ -475,6 +475,8 @@ def sidebands_pulse(
     extra_phase=0, # in radian
     is_gauss_rise = False,
     is_gauss_fall = False,
+    t_offset = 0,
+    rise_width=None,          # 새로 추가 가능
     sigma=1 / 3,
     zero_boundaries=False,
     **_,
@@ -493,38 +495,74 @@ def sidebands_pulse(
 
        Unit of frequency should be matched due to "x"
     """
+    local_t = (x + 1) * length / 2
+    global_t = t_offset + local_t
 
     _frequency_l = frequency_l * length/2
     _frequency_h = frequency_h * length/2
 
-    pulse = amp_h*np.exp(-1j*(_frequency_h*x*2*np.pi + phase)) + amp_l*np.exp(1j*(_frequency_l*x*2*np.pi + phase + extra_phase))
+    pulse = amp_h*np.exp(-1j*(frequency_h*global_t*2*np.pi + phase)) + amp_l*np.exp(1j*(frequency_l*global_t*2*np.pi + phase + extra_phase))
+    # pulse = amp_h*np.exp(-1j*(_frequency_h*(x+1)*2*np.pi + phase)) + amp_l*np.exp(1j*(_frequency_l*(x+1)*2*np.pi + phase + extra_phase))
+
+    envelope = np.ones_like(x)
 
     if is_gauss_rise:
-        gauss_rise = np.exp(-((x-1)**2) / (2 * sigma**2))
 
-        if zero_boundaries:
-            dt = x[0] - (x[1] - x[0])
-            dt = np.abs(dt)
-            delta = np.exp(-(dt**2) / (2 * sigma**2))
-            gauss_rise -= delta
-            gauss_rise /= 1 - delta
+        # rise_samples = round(len(x) * rise_width / length)
+
+        # # 예외 처리
+        # if rise_samples < 1:
+        #     rise_samples = 1
+        # if rise_samples > len(x):
+        #     rise_samples = len(x)
+        rise_samples = len(x)
+
+        # 앞부분에만 들어갈 gaussian rise 생성
+        rise_x = np.linspace(-1.0, 1.0, rise_samples)
+        rise_env = np.exp(-((rise_x - 1)**2) / (2 * sigma**2))
+
+        envelope[:rise_samples] *= rise_env
         
-        pulse *= gauss_rise
+        # gauss_rise = np.exp(-((x-1)**2) / (2 * sigma**2))
+
+        # if zero_boundaries:
+        #     dt = x[0] - (x[1] - x[0])
+        #     dt = np.abs(dt)
+        #     delta = np.exp(-(dt**2) / (2 * sigma**2))
+        #     gauss_rise -= delta
+        #     gauss_rise /= 1 - delta
+        
+        # pulse *= gauss_rise
 
     if is_gauss_fall:
-        gauss_fall = np.exp(-((x+1)**2) / (2 * sigma**2))
 
-        if zero_boundaries:
-            dt = x[0] - (x[1] - x[0])
-            dt = np.abs(dt)
-            delta = np.exp(-(dt**2) / (2 * sigma**2))
-            gauss_fall -= delta
-            gauss_fall /= 1 - delta
+        # fall_samples = round(len(x) * rise_width / length)
 
-        pulse *= gauss_fall
+        # if fall_samples < 1:
+        #     fall_samples = 1
+        # if fall_samples > len(x):
+        #     fall_samples = len(x)
+        fall_samples = len(x)
+
+        fall_x = np.linspace(-1.0, 1.0, fall_samples)
+        fall_env = np.exp(-((fall_x + 1)**2) / (2 * sigma**2))
+
+        envelope[-fall_samples:] *= fall_env
+
+        # gauss_fall = np.exp(-((x+1)**2) / (2 * sigma**2))
+
+        # if zero_boundaries:
+        #     dt = x[0] - (x[1] - x[0])
+        #     dt = np.abs(dt)
+        #     delta = np.exp(-(dt**2) / (2 * sigma**2))
+        #     gauss_fall -= delta
+        #     gauss_fall /= 1 - delta
+
+        # pulse *= gauss_fall
+
+    pulse *= envelope
 
     return pulse
-
 
 @register_pulse_functional
 def gauss_sidebands_pulse(

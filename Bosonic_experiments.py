@@ -1,4 +1,4 @@
-# In[]
+﻿# In[]
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -142,7 +142,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[component]["readout_phase"]
@@ -274,9 +274,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             print(f"popt: {popt}")
 
             ax2.plot(time*1e6, sfit1.func(time, *popt))
-            an = ax2.annotate((f'T1 = {(1/decay_rate*1e6):.2f}±{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us]\n'
-                               r'$\frac{\kappa}{2\pi}$' + f' = {decay_rate/2/np.pi*1e-3:.2f}±{decay_rate_err/2/np.pi*1e-3:.3f}[kHz]\n'
-                               f'alpha = {alpha_size:.2f}±{alpha_size_err:.2f}'), 
+            an = ax2.annotate((f'T1 = {(1/decay_rate*1e6):.2f}짹{(1/(decay_rate)**2*decay_rate_err*1e6):.2f}[us]\n'
+                               r'$\frac{\kappa}{2\pi}$' + f' = {decay_rate/2/np.pi*1e-3:.2f}짹{decay_rate_err/2/np.pi*1e-3:.3f}[kHz]\n'
+                               f'alpha = {alpha_size:.2f}짹{alpha_size_err:.2f}'), 
                              xy = (np.average(time*1e6), np.average((data_1-data_0)[0:10]) ),
                              size = 16)
             an.draggable()
@@ -369,7 +369,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             "cavity_drive_if_osc",
             frequency=freq_sweep,
         )
-        exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+        exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line ?대쫫?쇰줈 signal calibration : ?대떦 ?ㅽ뿕 ?쇱떆???곸슜
             oscillator=cavity_mode_oscillator
         )
 
@@ -461,7 +461,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -716,7 +716,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -812,7 +812,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.simulation_plot(compiled_exp_CNOD_calibration, start_time=0, length=20e-6)
             show_pulse_sheet("CNOD_calibration", compiled_exp_CNOD_calibration)
 
-    def plot_CNOD_calibration(self, scaling_factor=1):
+    def plot_CNOD_calibration(self, scaling_factor=1, is_normalize=True):
 
         self.CNOD_calibration_data = self.CNOD_calibration_results.get_data("CNOD_calibration")
 
@@ -820,6 +820,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             data = np.real(self.CNOD_calibration_data)
         else:
             data = np.imag(self.CNOD_calibration_data)
+
+        if is_normalize:
+            data, e_state, g_state = self.data_to_sigma_z(data)
 
         if np.isreal(self.CNOD_calibration_amp_range):
             # real axis sweep
@@ -864,28 +867,30 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             ax.plot(amp*amplitude_sweep_list/scaling_factor, 
                     sfit1.func(amp*amplitude_sweep_list/scaling_factor, *popt), label='fit', color='g')
             
-            an1 = ax.annotate(rf'frequency = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
-                              + rf'$\sigma$ = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f},'+ '\n'
-                              + rf'$\beta$ = {popt[1]*np.pi:.4f}',
-                xy=((amp*amplitude_sweep_list/scaling_factor)[0], np.average(data)*1-0.5),
+            an1 = ax.annotate(rf'frequency = {popt[1]:.4f}짹{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
+                              + rf'$\sigma$ = {popt[2]:.4f}짹{np.sqrt(np.diag(pcov))[2]:.4f},'+ '\n'
+                              + rf'$\beta$ = {popt[1]*np.pi:.4f}짹{np.pi*np.sqrt(np.diag(pcov))[1]:.4f}' +'\n'
+                              + rf'A = {popt[0]:.4f}짹{np.sqrt(np.diag(pcov))[0]:.4f}',
+                xy=((amp*amplitude_sweep_list/scaling_factor)[0], 0.6),
                 size=20)
             an1.draggable()
             
             an2 = ax.annotate(f'Disp_amp = {disp_amp:.4f}, Disp_length = {np.round(disp_length*1e9)}ns',
-                xy=((amp*amplitude_sweep_list/scaling_factor)[0], np.average(data)*0.5-0.75),
+                xy=((amp*amplitude_sweep_list/scaling_factor)[0], 0.2),
                 size=20)
             an2.draggable()
         else:
             sfit1 = sFit('Gaussian', amp*amplitude_sweep_list/scaling_factor, data)
             # Scale the amplitude into alpha (photon number) by using alpha_1_CNOD_amp
-            
+
             popt = sfit1._curve_fit()[0]
             pcov = sfit1._curve_fit()[1]
 
             ax.plot(amp*amplitude_sweep_list/scaling_factor, 
                     sfit1.func(amp*amplitude_sweep_list/scaling_factor, *popt), label='fit', color='g')
             
-            an1 = ax.annotate(rf'$\sigma$ = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f},',
+            an1 = ax.annotate(rf'$\sigma$ = {popt[1]:.4f}짹{np.sqrt(np.diag(pcov))[1]:.4f},' + '\n'
+                              + rf'A = {popt[0]:.4f}짹{np.sqrt(np.diag(pcov))[0]:.4f}',
                 xy=((amp*amplitude_sweep_list/scaling_factor)[0], np.average(data)*1),
                 size=20)
             an1.draggable()
@@ -896,7 +901,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         else:
             ax.set_title('imaginary part')
         ax.set_xlabel('Amplitude (a.u.)')
-        ax.set_ylabel(f'[{self.which_data}] (a.u.)')
+        ax.set_ylabel(f'$\\langle \\sigma_z \\rangle$')
         ax.legend()
 
         self.save_results(experiment_name="CNOD_calibration")
@@ -921,7 +926,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1085,8 +1090,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 sfit1.func(cond_disp_pulse_amp/alpha_1_CNOD_amp*cnod_sweep_list, *popt), label='fit', color='g')
 
         annotation_text = r"$\phi : A\alpha^2 + C$"+'\n'\
-                            +f'A = {popt[0]:.4f} ± {np.sqrt(np.diag(pcov))[0]:.4f}' + '\n'\
-                            +f'C = {popt[1]:.4f} ± {np.sqrt(np.diag(pcov))[1]:.4f}'
+                            +f'A = {popt[0]:.4f} 짹 {np.sqrt(np.diag(pcov))[0]:.4f}' + '\n'\
+                            +f'C = {popt[1]:.4f} 짹 {np.sqrt(np.diag(pcov))[1]:.4f}'
 
         an = ax.annotate(annotation_text,
                      xy=(0, np.mean(np.arctan2(y,x))), xycoords='axes fraction',
@@ -1118,7 +1123,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1286,7 +1291,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1394,7 +1399,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         
         freq = popt[1]
         freq_err = np.sqrt(np.diag(pcov))[1]
-        annotation_text = f"freq = {freq:.4f} ± {freq_err:.4f}\nscaling factor = π x freq"
+        annotation_text = f"freq = {freq:.4f} 짹 {freq_err:.4f}\nscaling factor = ? x freq"
 
         an = ax.annotate(annotation_text,
                      xy=(0.05, 0.95), xycoords='axes fraction',
@@ -1445,7 +1450,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1557,7 +1562,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             ax[1].plot(amp*disp_amp_sweep_list/scaling_factor, 
                     sfit1.func(amp*disp_amp_sweep_list/scaling_factor, *popt), label='fit', color='g')
         
-            an = ax[1].annotate(f'sigma = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}',
+            an = ax[1].annotate(f'sigma = {popt[1]:.4f}짹{np.sqrt(np.diag(pcov))[1]:.4f}',
                             xy=(np.average(amp*disp_amp_sweep_list/scaling_factor), np.average(data[0]-data[1])))
             an.draggable()
 
@@ -1599,7 +1604,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1698,10 +1703,10 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         self.nopi_value
 
-        if self.nopi_value > self.pi_value: # pi nopi measurement 값을 비교
+        if self.nopi_value > self.pi_value: # pi nopi measurement 媛믪쓣 鍮꾧탳
             if init_state == "g":
-                z_max = np.max(Z_flat) # 나중에 pi nopi measurement에서 z_max, z_min을 이용해서
-                # z_range를 구하고, 그 범위에 해당하는 데이터만을 선택하여 fitting을 수행.
+                z_max = np.max(Z_flat) # ?섏쨷??pi nopi measurement?먯꽌 z_max, z_min???댁슜?댁꽌
+                # z_range瑜?援ы븯怨? 洹?踰붿쐞???대떦?섎뒗 ?곗씠?곕쭔???좏깮?섏뿬 fitting???섑뻾.
                 z_min = np.min(Z_flat)
                 z_range = (1/3) * (z_max - z_min)
                 mask = (Z_flat >= z_min) & (Z_flat <= z_min + z_range)
@@ -1732,7 +1737,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         X_vals = X_flat[mask].reshape(-1, 1)
         Y_vals = Y_flat[mask]
 
-        # y축 라인별로 x값 평균 구하고 scatter plot
+        # y異??쇱씤蹂꾨줈 x媛??됯퇏 援ы븯怨?scatter plot
         X_avgs = []
         Y_avgs = []
         for i in range(len(x_axis)):
@@ -1793,7 +1798,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                          qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1904,7 +1909,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        cond_disp_pulse, cavity_drive_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse, _, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -1980,7 +1985,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             "cavity_drive_if_osc",
             frequency=self.cavity_parameters[cavity_component][f"{cavity_component}_freq_IF"] + detuning,
         )
-        exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
+        exp_calibration["cavity_drive"] = SignalCalibration( # experimental signal line ?대쫫?쇰줈 signal calibration : ?대떦 ?ㅽ뿕 ?쇱떆???곸슜
             oscillator=cavity_mode_oscillator
         )
         exp_storage_mode_characterization.set_calibration(exp_calibration)
@@ -2045,9 +2050,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             ax[1].plot(delay_sweep_list, 
                     sfit1.func(delay_sweep_list, *popt), label='fit', color='g')
 
-            an = ax[1].annotate(f'freq = {popt[3]:.4f}±{np.sqrt(np.diag(pcov))[3]:.4f}Hz'+'\n'
-                                + f'omega = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
-                                + f'T1 = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f}s',
+            an = ax[1].annotate(f'freq = {popt[3]:.4f}짹{np.sqrt(np.diag(pcov))[3]:.4f}Hz'+'\n'
+                                + f'omega = {popt[1]:.4f}짹{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
+                                + f'T1 = {popt[2]:.4f}짹{np.sqrt(np.diag(pcov))[2]:.4f}s',
                             xy=(np.average(delay_sweep_list), np.average(data[0]-data[1])*0.95))
             an.draggable()
 
@@ -2131,8 +2136,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,sidebands_pulse,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
-                                                                   qubits_component, cavity_component)
+        cond_disp_pulse, cavity_drive_pulse,sidebands_pulse,sideband_rise,sideband_fall,sideband_const, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component, length = cavity_parameters[cavity_component]["steady_time"])
         
         rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
                                                                qubits_component, cavity_component, length = evolution_time_for_Dirac_simul)
@@ -2194,7 +2199,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     elif is_cat_and_back:
                         self.cat_and_back(exp_wigner_characteristic_function, cond_disp_pulse, pi2_pulse, pi_pulse, alpha)
                     elif is_sideband_drive:
-                        self.sideband_driving(exp_wigner_characteristic_function, sidebands_pulse, cavity_drive_pulse, amplitude,
+                        self.sideband_driving(exp_wigner_characteristic_function, sideband_rise,sideband_fall,sideband_const, cavity_drive_pulse, amplitude,
                                               steady_time = self.cavity_parameters[cavity_component]['steady_time'],
                                               is_init_displaced_state=is_init_displaced_state)
                     elif is_Dirac_simul:
@@ -2318,7 +2323,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             G = np.nanmean(_G, axis=0, keepdims=False)
             E = np.nanmean(_E, axis=0, keepdims=False)
 
-            valid_counts_G = np.sum(~np.isnan(_G), axis=0) # Nan 제외한 개수
+            valid_counts_G = np.sum(~np.isnan(_G), axis=0) # Nan ?쒖쇅??媛쒖닔
             valid_counts_E = np.sum(~np.isnan(_E), axis=0)
 
             std_G = np.nanstd(_G, axis=0, keepdims=False)
@@ -2355,7 +2360,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 if self.is_wigner_function:
                     plt.title(f"Wigner function (G), ratio : {false_count / (true_count + false_count):.4f}")
                 else:
-                    plt.title(f"Characteristic function, ratio : {false_count / (true_count + false_count):.4f}")
+                    plt.title(f"Characteristic function (G), ratio : {false_count / (true_count + false_count):.4f}")
                 plt.xlabel(r'Re($\alpha$)')
                 plt.ylabel(r'Im($\alpha$)')
 
@@ -2471,8 +2476,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,sidebands_pulse,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
-                                                                   qubits_component, cavity_component)
+        cond_disp_pulse, cavity_drive_pulse,sidebands_pulse,sideband_rise,sideband_fall,sideband_const, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component, length = self.cavity_parameters[cavity_component]['steady_time'])
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
 
@@ -2515,7 +2520,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 elif is_cat_and_back:
                     self.cat_and_back(exp_characteristic_function_1D, cond_disp_pulse, pi2_pulse, pi_pulse, alpha)
                 elif is_sideband_drive:
-                    self.sideband_driving(exp_characteristic_function_1D, sidebands_pulse, cavity_drive_pulse, amplitude,
+                    self.sideband_driving(exp_characteristic_function_1D, sideband_rise, sideband_fall, sideband_const, cavity_drive_pulse, amplitude,
                                             steady_time = self.cavity_parameters[cavity_component]['steady_time'])
                 
                 prev_uid = "preparation"
@@ -2572,7 +2577,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.simulation_plot(compiled_exp_characteristic_function_1D, start_time=0, length=20e-6)
 
 
-    def plot_characteristic_function_measurement_1D(self, is_normalize = True, is_store_values = False):
+    def plot_characteristic_function_measurement_1D(self, is_normalize = True, is_store_values = False, is_save_data = False):
         
         cavity_parameters = self.cavity_parameters
         cavity_component = list(cavity_parameters.keys())[self.which_mode]
@@ -2626,7 +2631,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             G = np.nanmean(_G, axis=0, keepdims=False)
             E = np.nanmean(_E, axis=0, keepdims=False)
 
-            valid_counts_G = np.sum(~np.isnan(_G), axis=0) # Nan 제외한 개수
+            valid_counts_G = np.sum(~np.isnan(_G), axis=0) # Nan ?쒖쇅??媛쒖닔
             valid_counts_E = np.sum(~np.isnan(_E), axis=0)
 
             std_G = np.nanstd(_G, axis=0, keepdims=False)
@@ -2646,34 +2651,42 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             ax1[0].errorbar(amp*amplitude_sweep_list/alpha_1_CNOD_amp, G, yerr = se_G, fmt = '--ok', capsize = 5, markersize = 3, ecolor = 'k', mfc=(0,0,0,0.5), mec = (0,0,0,1))
             ax1[1].errorbar(amp*amplitude_sweep_list/alpha_1_CNOD_amp, E, yerr = se_E, fmt = '--ok', capsize = 5, markersize = 3, ecolor = 'k', mfc=(0,0,0,0.5), mec = (0,0,0,1))
 
+            
             # Scale the amplitude into alpha (photon number) by using alpha_1_CNOD_amp
             sfit1 = sFit('GaussianCos', amp*amplitude_sweep_list/alpha_1_CNOD_amp, G)
+
+            bounds = (
+                [-np.inf, 0.0,  0.5, -np.pi, -1],  # lower
+                [np.inf, np.inf, 1.5, np.pi, 1] # upper
+            )
             
-            popt1 = sfit1._curve_fit()[0]
-            pcov1 = sfit1._curve_fit()[1]
+            fit_result = sfit1._curve_fit(bounds=bounds, sigma=se_G, absolute_sigma=True)
+            popt1, pcov1 = fit_result[0], fit_result[1]
 
             ax1[0].plot(amp*amplitude_sweep_list/alpha_1_CNOD_amp, 
                     sfit1.func(amp*amplitude_sweep_list/alpha_1_CNOD_amp, *popt1), label='fit', color='g')
             
             sfit2 = sFit('GaussianCos', amp*amplitude_sweep_list/alpha_1_CNOD_amp, E)
 
-            popt2 = sfit2._curve_fit()[0]
-            pcov2 = sfit2._curve_fit()[1]
+            fit_result2 = sfit2._curve_fit(bounds=bounds, sigma=se_E, absolute_sigma=True)
+            popt2, pcov2 = fit_result2[0], fit_result2[1]
 
             ax1[1].plot(amp*amplitude_sweep_list/alpha_1_CNOD_amp, 
                     sfit2.func(amp*amplitude_sweep_list/alpha_1_CNOD_amp, *popt2), label='fit', color='g')
             
             an1 = ax1[0].annotate(rf'frequency = {popt1[1]:.4f}±{np.sqrt(np.diag(pcov1))[1]:.4f}'+'\n'
                               + rf'$\sigma$ = {popt1[2]:.4f}±{np.sqrt(np.diag(pcov1))[2]:.4f},'+ '\n'
-                              + rf'$\beta$ = {popt1[1]*np.pi:.4f}',
-                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], 0.75),
+                              + rf'$\beta$ = {popt1[1]*np.pi:.4f}±{np.pi*np.sqrt(np.diag(pcov1))[1]:.4f}' + '\n'
+                              + rf'A = {popt1[0]:.4f}±{np.sqrt(np.diag(pcov1))[0]:.4f}',
+                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], np.min(G)),
                 size=12)
             an1.draggable()
 
             an2 = ax1[1].annotate(rf'frequency = {popt2[1]:.4f}±{np.sqrt(np.diag(pcov2))[1]:.4f}'+'\n'
                               + rf'$\sigma$ = {popt2[2]:.4f}±{np.sqrt(np.diag(pcov2))[2]:.4f},'+ '\n'
-                              + rf'$\beta$ = {popt2[1]*np.pi:.4f}',
-                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], -0.75),
+                              + rf'$\beta$ = {popt2[1]*np.pi:.4f}±{np.pi*np.sqrt(np.diag(pcov2))[1]:.4f}' + '\n'
+                              + rf'A = {popt2[0]:.4f}±{np.sqrt(np.diag(pcov2))[0]:.4f}',
+                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], np.min(E)),
                 size=12)
             an2.draggable()
 
@@ -2700,17 +2713,42 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     if self.qubit_phase == 0:
                         self.characteristic_function_results_dict['Re_c_Re_alpha_g'] = popt1
                         self.characteristic_function_results_dict['Re_c_Re_alpha_e'] = popt2
+
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_g_func'] = sfit1
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_e_func'] = sfit2
+
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_g_cov'] = pcov1
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_e_cov'] = pcov2
                     else:
                         self.characteristic_function_results_dict['Im_c_Re_alpha_g'] = popt1
                         self.characteristic_function_results_dict['Im_c_Re_alpha_e'] = popt2
+
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_g_cov'] = pcov1
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_e_cov'] = pcov2
+
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_g_func'] = sfit1
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_e_func'] = sfit2
                 
                 else:
                     if self.qubit_phase == 0:
                         self.characteristic_function_results_dict['Re_c_Im_alpha_g'] = popt1
                         self.characteristic_function_results_dict['Re_c_Im_alpha_e'] = popt2
+
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_g_cov'] = pcov1
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_e_cov'] = pcov2
+
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_g_func'] = sfit1
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_e_func'] = sfit2
                     else:
                         self.characteristic_function_results_dict['Im_c_Im_alpha_g'] = popt1
                         self.characteristic_function_results_dict['Im_c_Im_alpha_e'] = popt2
+
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_g_cov'] = pcov1
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_e_cov'] = pcov2
+
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_g_func'] = sfit1
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_e_func'] = sfit2
+
         else:
             if self.which_data == "I":
 
@@ -2732,7 +2770,6 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 data = np.mean(normalized_data, axis=0)
                 std_data = np.std(normalized_data, axis=0)/np.sqrt(self.characteristic_function_1D_data.shape[0])
 
-            
             fig2, ax2 = plt.subplots(1, 1, figsize=(12,12))
 
             fig2.suptitle("Characteristic function 1D measurement (w/o post-selection)", size=16)
@@ -2741,19 +2778,25 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
             sfit1 = sFit('GaussianCos', amp*amplitude_sweep_list/alpha_1_CNOD_amp, data)
             # Scale the amplitude into alpha (photon number) by using alpha_1_CNOD_amp
-            
-            popt = sfit1._curve_fit()[0]
-            pcov = sfit1._curve_fit()[1]
 
-            print("Fitted parameters:", popt)
+            bounds = (
+                [-np.inf, 0.0,  0.5, -np.pi, -1],  # lower
+                [np.inf, np.inf, 1.5, np.pi, 1] # upper
+            )
+
+            fit_result = sfit1._curve_fit(bounds=bounds, sigma=std_data, absolute_sigma=True)
+            
+            popt = fit_result[0]
+            pcov = fit_result[1]
 
             ax2.plot(amp*amplitude_sweep_list/alpha_1_CNOD_amp, 
                     sfit1.func(amp*amplitude_sweep_list/alpha_1_CNOD_amp, *popt), label='fit', color='g')
-            
+
             an1 = ax2.annotate(rf'frequency = {popt[1]:.4f}±{np.sqrt(np.diag(pcov))[1]:.4f}'+'\n'
                               + rf'$\sigma$ = {popt[2]:.4f}±{np.sqrt(np.diag(pcov))[2]:.4f},'+ '\n'
-                              + rf'$\beta$ = {popt[1]*np.pi:.4f}',
-                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], 0.75),
+                              + rf'$\beta$ = {popt[1]*np.pi:.4f} ±{np.pi*np.sqrt(np.diag(pcov))[1]:.4f}' + '\n'
+                              + rf'A = {popt[0]:.4f}±{np.sqrt(np.diag(pcov))[0]:.4f}',
+                xy=((amp*amplitude_sweep_list/alpha_1_CNOD_amp)[0], np.min(data)),
                 size=12)
             an1.draggable()
 
@@ -2762,7 +2805,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             else:
                 ax2.set_xlabel(r'Im[$\alpha$]')
             
-            ax2.set_ylabel(r'$\sigma_z$')
+            ax2.set_ylabel(r'$C_{\alpha}$')
             ax2.legend()
 
             self.save_results(experiment_name="characteristic_function_1D", detail="without_post_selection")
@@ -2775,18 +2818,270 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                 if np.isreal(self.characteristic_function_1D_amp_range):
                     if self.qubit_phase == 0:
                         self.characteristic_function_results_dict['Re_c_Re_alpha'] = popt
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_cov'] = pcov
+                        self.characteristic_function_results_dict['Re_c_Re_alpha_func'] = sfit1 
+
                     else:
                         self.characteristic_function_results_dict['Im_c_Re_alpha'] = popt
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_cov'] = pcov
+                        self.characteristic_function_results_dict['Im_c_Re_alpha_func'] = sfit1
                 
                 else:
                     if self.qubit_phase == 0:
                         self.characteristic_function_results_dict['Re_c_Im_alpha'] = popt
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_cov'] = pcov
+                        self.characteristic_function_results_dict['Re_c_Im_alpha_func'] = sfit1
                     else:
                         self.characteristic_function_results_dict['Im_c_Im_alpha'] = popt
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_cov'] = pcov
+                        self.characteristic_function_results_dict['Im_c_Im_alpha_func'] = sfit1
 
-    def get_state_info(self):
+        if is_save_data:
+            self._save_Dirac_simul_1D_data(amp, alpha_1_CNOD_amp, amplitude_sweep_list)
 
-        ## Im part 만 알아도 coherent state 정보 구할 수 있음, 크기랑 각도 값
+
+    def get_state_info(
+        self,
+        slope0_Im_c_Im_alpha_g=None,
+        slope0_error_Im_c_Im_alpha_g=None,
+        slope0_Im_c_Im_alpha_e=None,
+        slope0_error_Im_c_Im_alpha_e=None,
+        slope0_Im_c_Re_alpha_g=None,
+        slope0_error_Im_c_Re_alpha_g=None,
+        slope0_Im_c_Re_alpha_e=None,
+        slope0_error_Im_c_Re_alpha_e=None,
+        slope0_Im_c_Im_alpha=None,
+        slope0_error_Im_c_Im_alpha=None,
+        slope0_Im_c_Re_alpha=None,
+        slope0_error_Im_c_Re_alpha=None,
+    ):
+
+        cavity_parameters = self.cavity_parameters
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
+        qubits_parameters = self.qubits_parameters
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+
+        def compute_derivative(sfit, popt, pcov, h_x=1e-6):
+            def f_of_x_params(x, params):
+                return sfit.func(x, *params)
+
+            def dfdx_at_zero(params, h_x):
+                return (f_of_x_params(h_x, params) - f_of_x_params(-h_x, params)) / (2 * h_x)
+
+            p = np.asarray(popt, dtype=float)
+            C = np.asarray(pcov, dtype=float)
+            slope0 = dfdx_at_zero(p, h_x)
+
+            J = np.zeros_like(p)
+            eps = np.sqrt(np.finfo(float).eps)
+            for i in range(len(p)):
+                dp = np.zeros_like(p)
+                h_p = eps * (abs(p[i]) + 1.0)
+                dp[i] = h_p
+                g_plus = dfdx_at_zero(p + dp, h_x)
+                g_minus = dfdx_at_zero(p - dp, h_x)
+                J[i] = (g_plus - g_minus) / (2 * h_p)
+
+            var_slope0 = float(J @ C @ J)
+            sigma_slope0 = np.sqrt(max(var_slope0, 0.0))
+            return slope0, sigma_slope0
+
+        def resolve_slope_pair(default_value, default_error, input_value=None, input_error=None):
+            final_value = default_value if input_value is None else input_value
+            final_error = default_error if input_error is None else input_error
+            return final_value, final_error
+
+        if self.is_post_selection:
+            required = ["Im_c_Re_alpha_g", "Im_c_Re_alpha_e", "Im_c_Im_alpha_g", "Im_c_Im_alpha_e"]
+            missing = [key for key in required if key not in self.characteristic_function_results_dict]
+            if missing:
+                raise ValueError(f"Missing required parameters: {missing}")
+
+            popt_Im_c_Re_alpha_g = self.characteristic_function_results_dict["Im_c_Re_alpha_g"]
+            popt_Im_c_Re_alpha_e = self.characteristic_function_results_dict["Im_c_Re_alpha_e"]
+            pcov_Im_c_Re_alpha_g = self.characteristic_function_results_dict["Im_c_Re_alpha_g_cov"]
+            pcov_Im_c_Re_alpha_e = self.characteristic_function_results_dict["Im_c_Re_alpha_e_cov"]
+            func_Im_c_Re_alpha_g = self.characteristic_function_results_dict["Im_c_Re_alpha_g_func"]
+            func_Im_c_Re_alpha_e = self.characteristic_function_results_dict["Im_c_Re_alpha_e_func"]
+
+            popt_Im_c_Im_alpha_g = self.characteristic_function_results_dict["Im_c_Im_alpha_g"]
+            popt_Im_c_Im_alpha_e = self.characteristic_function_results_dict["Im_c_Im_alpha_e"]
+            pcov_Im_c_Im_alpha_g = self.characteristic_function_results_dict["Im_c_Im_alpha_g_cov"]
+            pcov_Im_c_Im_alpha_e = self.characteristic_function_results_dict["Im_c_Im_alpha_e_cov"]
+            func_Im_c_Im_alpha_g = self.characteristic_function_results_dict["Im_c_Im_alpha_g_func"]
+            func_Im_c_Im_alpha_e = self.characteristic_function_results_dict["Im_c_Im_alpha_e_func"]
+
+            computed_slope0_Im_c_Im_alpha_g, computed_slope0_error_Im_c_Im_alpha_g = compute_derivative(
+                func_Im_c_Im_alpha_g, popt_Im_c_Im_alpha_g, pcov_Im_c_Im_alpha_g
+            )
+            computed_slope0_Im_c_Im_alpha_e, computed_slope0_error_Im_c_Im_alpha_e = compute_derivative(
+                func_Im_c_Im_alpha_e, popt_Im_c_Im_alpha_e, pcov_Im_c_Im_alpha_e
+            )
+            computed_slope0_Im_c_Re_alpha_g, computed_slope0_error_Im_c_Re_alpha_g = compute_derivative(
+                func_Im_c_Re_alpha_g, popt_Im_c_Re_alpha_g, pcov_Im_c_Re_alpha_g
+            )
+            computed_slope0_Im_c_Re_alpha_e, computed_slope0_error_Im_c_Re_alpha_e = compute_derivative(
+                func_Im_c_Re_alpha_e, popt_Im_c_Re_alpha_e, pcov_Im_c_Re_alpha_e
+            )
+
+            computed_slope0_Im_c_Im_alpha_e = -1 * computed_slope0_Im_c_Im_alpha_e
+            computed_slope0_Im_c_Re_alpha_e = -1 * computed_slope0_Im_c_Re_alpha_e
+
+            slope0_Im_c_Im_alpha_g, slope0_error_Im_c_Im_alpha_g = resolve_slope_pair(
+                computed_slope0_Im_c_Im_alpha_g,
+                computed_slope0_error_Im_c_Im_alpha_g,
+                input_value=slope0_Im_c_Im_alpha_g,
+                input_error=slope0_error_Im_c_Im_alpha_g,
+            )
+            slope0_Im_c_Im_alpha_e, slope0_error_Im_c_Im_alpha_e = resolve_slope_pair(
+                computed_slope0_Im_c_Im_alpha_e,
+                computed_slope0_error_Im_c_Im_alpha_e,
+                input_value=slope0_Im_c_Im_alpha_e,
+                input_error=slope0_error_Im_c_Im_alpha_e,
+            )
+            slope0_Im_c_Re_alpha_g, slope0_error_Im_c_Re_alpha_g = resolve_slope_pair(
+                computed_slope0_Im_c_Re_alpha_g,
+                computed_slope0_error_Im_c_Re_alpha_g,
+                input_value=slope0_Im_c_Re_alpha_g,
+                input_error=slope0_error_Im_c_Re_alpha_g,
+            )
+            slope0_Im_c_Re_alpha_e, slope0_error_Im_c_Re_alpha_e = resolve_slope_pair(
+                computed_slope0_Im_c_Re_alpha_e,
+                computed_slope0_error_Im_c_Re_alpha_e,
+                input_value=slope0_Im_c_Re_alpha_e,
+                input_error=slope0_error_Im_c_Re_alpha_e,
+            )
+
+            print(f"slope0_Im_c_Im_alpha_g = {slope0_Im_c_Im_alpha_g:.4f} ± {slope0_error_Im_c_Im_alpha_g:.4f}")
+            print(f"slope0_Im_c_Re_alpha_g = {slope0_Im_c_Re_alpha_g:.4f} ± {slope0_error_Im_c_Re_alpha_g:.4f}")
+            print(f"slope0_Im_c_Im_alpha_e = {slope0_Im_c_Im_alpha_e:.4f} ± {slope0_error_Im_c_Im_alpha_e:.4f}")
+            print(f"slope0_Im_c_Re_alpha_e = {slope0_Im_c_Re_alpha_e:.4f} ± {slope0_error_Im_c_Re_alpha_e:.4f}")
+
+            def transformed_slope(slope0_x, slope0_y, theta):
+                _x = slope0_x * np.cos(theta) + slope0_y * np.sin(theta)
+                _y = -slope0_x * np.sin(theta) + slope0_y * np.cos(theta)
+                return _x, _y
+
+            def transformed_slope_error(error_x, error_y, theta):
+                return (
+                    np.sqrt((error_x * np.cos(theta)) ** 2 + (error_y * np.sin(theta)) ** 2),
+                    np.sqrt((error_x * -np.sin(theta)) ** 2 + (error_y * np.cos(theta)) ** 2),
+                )
+
+            rotation = 2 * np.pi * (-cavity_parameters[cavity_component]["chi_for_cnod"]) * (
+                qubits_parameters[qubits_component]["drachma_readout_pulse_length"] + self.acquire_delay
+            )
+
+            transformed_Im_a_g, transformed_Re_a_g = transformed_slope(
+                slope0_Im_c_Re_alpha_g, slope0_Im_c_Im_alpha_g, -rotation
+            )
+            transformed_Im_a_g_error, transformed_Re_a_g_error = transformed_slope_error(
+                slope0_error_Im_c_Re_alpha_g, slope0_error_Im_c_Im_alpha_g, -rotation
+            )
+            transformed_Im_a_e, transformed_Re_a_e = transformed_slope(
+                slope0_Im_c_Re_alpha_e, slope0_Im_c_Im_alpha_e, rotation
+            )
+            transformed_Im_a_e_error, transformed_Re_a_e_error = transformed_slope_error(
+                slope0_error_Im_c_Re_alpha_e, slope0_error_Im_c_Im_alpha_e, rotation
+            )
+
+            P_g = self.ground_state_ratio
+            re_a = 0.5 * P_g * transformed_Re_a_g + 0.5 * (1 - P_g) * transformed_Re_a_e
+            re_a_err = np.sqrt((P_g / 2 * transformed_Re_a_g_error) ** 2 + ((1 - P_g) / 2 * transformed_Re_a_e_error) ** 2)
+            im_a = -0.5 * P_g * transformed_Im_a_g - 0.5 * (1 - P_g) * transformed_Im_a_e
+            im_a_err = np.sqrt((P_g / 2 * transformed_Im_a_g_error) ** 2 + ((1 - P_g) / 2 * transformed_Im_a_e_error) ** 2)
+
+            print(f"Re(<a>) = {re_a:.4f} ± {re_a_err:.4f}")
+            print(f"Im(<a>) = {im_a:.4f} ± {im_a_err:.4f}")
+
+
+            self.state_info_dict = {
+                "is_post_selection": True,
+                "ground_state_ratio": P_g,
+                "rotation": rotation,
+                "slope0_Im_c_Im_alpha_g": slope0_Im_c_Im_alpha_g,
+                "slope0_Im_c_Im_alpha_g_error": slope0_error_Im_c_Im_alpha_g,
+                "slope0_Im_c_Re_alpha_g": slope0_Im_c_Re_alpha_g,
+                "slope0_Im_c_Re_alpha_g_error": slope0_error_Im_c_Re_alpha_g,
+                "slope0_Im_c_Im_alpha_e": slope0_Im_c_Im_alpha_e,
+                "slope0_Im_c_Im_alpha_e_error": slope0_error_Im_c_Im_alpha_e,
+                "slope0_Im_c_Re_alpha_e": slope0_Im_c_Re_alpha_e,
+                "slope0_Im_c_Re_alpha_e_error": slope0_error_Im_c_Re_alpha_e,
+                "transformed_Im_a_g": transformed_Im_a_g,
+                "transformed_Im_a_g_error": transformed_Im_a_g_error,
+                "transformed_Re_a_g": transformed_Re_a_g,
+                "transformed_Re_a_g_error": transformed_Re_a_g_error,
+                "transformed_Im_a_e": transformed_Im_a_e,
+                "transformed_Im_a_e_error": transformed_Im_a_e_error,
+                "transformed_Re_a_e": transformed_Re_a_e,
+                "transformed_Re_a_e_error": transformed_Re_a_e_error,
+                "Re_a": re_a,
+                "Re_a_error": re_a_err,
+                "Im_a": im_a,
+                "Im_a_error": im_a_err,
+            }
+
+        else:
+            required = ["Im_c_Im_alpha", "Im_c_Re_alpha"]
+            missing = [key for key in required if key not in self.characteristic_function_results_dict]
+            if missing:
+                raise ValueError(f"Missing required parameters: {missing}")
+
+            popt_Im_c_Im_alpha = self.characteristic_function_results_dict["Im_c_Im_alpha"]
+            pcov_Im_c_Im_alpha = self.characteristic_function_results_dict["Im_c_Im_alpha_cov"]
+            func_Im_c_Im_alpha = self.characteristic_function_results_dict["Im_c_Im_alpha_func"]
+            popt_Im_c_Re_alpha = self.characteristic_function_results_dict["Im_c_Re_alpha"]
+            pcov_Im_c_Re_alpha = self.characteristic_function_results_dict["Im_c_Re_alpha_cov"]
+            func_Im_c_Re_alpha = self.characteristic_function_results_dict["Im_c_Re_alpha_func"]
+
+            computed_slope0_Im_c_Im_alpha, computed_slope0_error_Im_c_Im_alpha = compute_derivative(
+                func_Im_c_Im_alpha, popt_Im_c_Im_alpha, pcov_Im_c_Im_alpha
+            )
+            computed_slope0_Im_c_Re_alpha, computed_slope0_error_Im_c_Re_alpha = compute_derivative(
+                func_Im_c_Re_alpha, popt_Im_c_Re_alpha, pcov_Im_c_Re_alpha
+            )
+
+            slope0_Im_c_Im_alpha, slope0_error_Im_c_Im_alpha = resolve_slope_pair(
+                computed_slope0_Im_c_Im_alpha,
+                computed_slope0_error_Im_c_Im_alpha,
+                input_value=slope0_Im_c_Im_alpha,
+                input_error=slope0_error_Im_c_Im_alpha,
+            )
+            slope0_Im_c_Re_alpha, slope0_error_Im_c_Re_alpha = resolve_slope_pair(
+                computed_slope0_Im_c_Re_alpha,
+                computed_slope0_error_Im_c_Re_alpha,
+                input_value=slope0_Im_c_Re_alpha,
+                input_error=slope0_error_Im_c_Re_alpha,
+            )
+
+            re_a = -0.5 * (-slope0_Im_c_Im_alpha)
+            re_a_err = 0.5 * slope0_error_Im_c_Im_alpha
+            im_a = -0.5 * slope0_Im_c_Re_alpha
+            im_a_err = 0.5 * slope0_error_Im_c_Re_alpha
+
+            print(f"Re(<a>) = {re_a:.4f} ± {re_a_err:.4f}")
+            print(f"Im(<a>) = {im_a:.4f} ± {im_a_err:.4f}")
+            print(f"slope0_Im_c_Im_alpha = {slope0_Im_c_Im_alpha:.4f} ± {slope0_error_Im_c_Im_alpha:.4f}")
+            print(f"slope0_Im_c_Re_alpha = {slope0_Im_c_Re_alpha:.4f} ± {slope0_error_Im_c_Re_alpha:.4f}")
+
+
+            self.state_info_dict = {
+                "is_post_selection": False,
+                "slope0_Im_c_Im_alpha": slope0_Im_c_Im_alpha,
+                "slope0_Im_c_Im_alpha_error": slope0_error_Im_c_Im_alpha,
+                "slope0_Im_c_Re_alpha": slope0_Im_c_Re_alpha,
+                "slope0_Im_c_Re_alpha_error": slope0_error_Im_c_Re_alpha,
+                "Re_a": re_a,
+                "Re_a_error": re_a_err,
+                "Im_a": im_a,
+                "Im_a_error": im_a_err,
+            }
+
+        self._save_state_info_dict_for_Dirac_simul_1D()
+
+    def get_coherent_state_info(self):
+
+        ## Im part 留??뚯븘??coherent state ?뺣낫 援ы븷 ???덉쓬, ?ш린??媛곷룄 媛?
         ### Im[C^beta(alpha)] = e^{-|alpha|^2/2} sin(2(alpha_I*beta_R - alpha_R*beta_I))
 
         cavity_parameters = self.cavity_parameters
@@ -2812,7 +3107,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.characteristic_function_results_dict["Im_c_Im_alpha_g"][3] < 0:
 
                 beta_R_g = np.pi * self.characteristic_function_results_dict["Im_c_Im_alpha_g"][1]
-            
+                
             else:
                 beta_R_g = - np.pi * self.characteristic_function_results_dict["Im_c_Im_alpha_g"][1]
 
@@ -2820,9 +3115,12 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             self.characteristic_function_results_dict["Im_c_Im_alpha_e"][3] < 0:
 
                 beta_R_e = np.pi * self.characteristic_function_results_dict["Im_c_Im_alpha_e"][1]
-            
+                
             else:
                 beta_R_e = - np.pi * self.characteristic_function_results_dict["Im_c_Im_alpha_e"][1]
+            
+            beta_R_g_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Im_alpha_g_cov"][1][1])
+            beta_R_e_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Im_alpha_e_cov"][1][1])
 
             if self.characteristic_function_results_dict["Im_c_Re_alpha_g"][0] * \
             self.characteristic_function_results_dict["Im_c_Re_alpha_g"][3] < 0: 
@@ -2835,35 +3133,57 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             if self.characteristic_function_results_dict["Im_c_Re_alpha_e"][0] * \
             self.characteristic_function_results_dict["Im_c_Re_alpha_e"][3] < 0: 
                 beta_I_e = - np.pi * self.characteristic_function_results_dict["Im_c_Re_alpha_e"][1]
-
             else:
                 beta_I_e = np.pi * self.characteristic_function_results_dict["Im_c_Re_alpha_e"][1]
+
+            beta_I_g_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Re_alpha_g_cov"][1][1])
+            beta_I_e_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Re_alpha_e_cov"][1][1])
+
 
             beta_tot_g = np.sqrt(beta_R_g**2 + beta_I_g**2)
             beta_tot_e = np.sqrt(beta_R_e**2 + beta_I_e**2)
 
+            beta_tot_g_error = np.sqrt((beta_R_g*beta_R_g_error)**2 + (beta_I_g*beta_I_g_error)**2)/beta_tot_g if beta_tot_g else 0
+            beta_tot_e_error = np.sqrt((beta_R_e*beta_R_e_error)**2 + (beta_I_e*beta_I_e_error)**2)/beta_tot_e if beta_tot_e else 0
+
             theta_g = np.arctan2(beta_I_g, beta_R_g)
             theta_e = np.arctan2(beta_I_e, beta_R_e)
+
+            theta_e = theta_e + np.pi # qubit state after projection is excited
+
+            theta_g_error = np.sqrt((beta_R_g*beta_I_g_error)**2 + (beta_I_g*beta_R_g_error)**2)/beta_tot_g**2 if beta_tot_g else 0
+            theta_e_error = np.sqrt((beta_R_e*beta_I_e_error)**2 + (beta_I_e*beta_R_e_error)**2)/beta_tot_e**2 if beta_tot_e else 0
 
             phase_g = theta_g + 2*np.pi*(-cavity_parameters[cavity_component]["chi_for_cnod"])*(qubits_parameters[qubits_component]["drachma_readout_pulse_length"]+self.acquire_delay)
             phase_e = theta_e - 2*np.pi*(-cavity_parameters[cavity_component]["chi_for_cnod"])*(qubits_parameters[qubits_component]["drachma_readout_pulse_length"]+self.acquire_delay)
 
-            print (f"Ground state coherent state amplitude : {beta_tot_g:.4f}, \
-                   phase : {phase_g:.4f} rad (considered post-selection time)") 
-            print (f"Excited state coherent state amplitude : {beta_tot_e:.4f}, \
-                   phase : {phase_e:.4f} rad (considered post-selection time)")
+            print (f"Ground state coherent state amplitude : {beta_tot_g:.4f}, phase : {phase_g:.4f} rad (considered post-selection time)") 
+            print (f"Excited state coherent state amplitude : {beta_tot_e:.4f}, phase : {phase_e:.4f} rad (considered post-selection time)")
+
+            print (f"Ground state coherent state amplitude : {beta_tot_g:.4f} 짹 {beta_tot_g_error:.4f}, phase : {theta_g:.4f} 짹 {theta_g_error:.4f} rad, {theta_g*180/np.pi:.4f} 짹 {theta_g_error*180/np.pi:.4f} deg") 
+            print (f"Excited state coherent state amplitude : {beta_tot_e:.4f} 짹 {beta_tot_e_error:.4f}, phase : {theta_e:.4f} 짹 {theta_e_error:.4f} rad, {theta_e*180/np.pi:.4f} 짹 {theta_e_error*180/np.pi:.4f} deg")
+
+            # re^(1j*theta) = rcos(theta) + irsin(theta)
+            # sigma_(rcos(theta)) = sigma_x, sigma_(rsin(theta)) = sigma_y
+            # sigma_x = np.sqrt(cos(theta)**2 * sigma_r**2 + r**2 * np.sin(theta)**2 * sigma_theta**2)
+            # sigma_y = np.sqrt(sin(theta)**2 * sigma_r**2 + r**2 * np.cos(theta)**2 * sigma_theta**2)
+
+            sigma_x_g = np.sqrt((beta_tot_g_error*np.cos(phase_g))**2 + (theta_g_error*beta_tot_g*np.sin(phase_g))**2)
+            sigma_y_g = np.sqrt((beta_tot_g_error*np.sin(phase_g))**2 + (beta_tot_g*theta_g_error*np.cos(phase_g))**2)
+
+            print (f"Ground state coherent state = ({np.real(beta_tot_g*np.exp(1j*phase_g)):.4f} 짹 {sigma_x_g:.4f}) + ({np.imag(beta_tot_g*np.exp(1j*phase_g)):.4f} 짹 {sigma_y_g:.4f})j")
+            
+            sigma_x_e = np.sqrt((beta_tot_e_error*np.cos(phase_e))**2 + (theta_e_error*beta_tot_e*np.sin(phase_e))**2)
+            sigma_y_e = np.sqrt((beta_tot_e_error*np.sin(phase_e))**2 + (beta_tot_e*theta_e_error*np.cos(phase_e))**2)
+            
+            print (f"Excited state coherent state = ({np.real(beta_tot_e*np.exp(1j*phase_e)):.4f} 짹 {sigma_x_e:.4f}) + ({np.imag(beta_tot_e*np.exp(1j*phase_e)):.4f} 짹 {sigma_y_e:.4f})j")
         
+            print (rf"real part of $\langle a \rangle$ = {self.ground_state_ratio * np.real(beta_tot_g*np.exp(1j*phase_g)) + (1-self.ground_state_ratio)*np.real(beta_tot_e*np.exp(1j*phase_e)):.4f} 짹 {self.ground_state_ratio * sigma_x_g + (1-self.ground_state_ratio)*sigma_x_e:.4f}")
+
         else:
 
-            required = ["Im_c_Re_alpha", "Im_c_Im_alpha"]
-        
-            missing = [key for key in required if key not in self.characteristic_function_results_dict]
-            
-            if missing:
-                raise ValueError(f"Missing required parameters: {missing}")
-            
-            ## cos(phi - pi/2) = sin(phi)
-            ## cos(phi + pi/2) = -sin(phi)
+            # cos(phi - pi/2) = sin(phi)
+            # cos(phi + pi/2) = -sin(phi)
             # delta : -pi/2 or pi/2
             if self.characteristic_function_results_dict["Im_c_Im_alpha"][0] * \
             self.characteristic_function_results_dict["Im_c_Im_alpha"][3] < 0:
@@ -2880,13 +3200,75 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
                 beta_I = np.pi * self.characteristic_function_results_dict["Im_c_Re_alpha"][1]
             
+            beta_R_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Re_alpha_cov"][1][1])
+            beta_I_error = np.pi * np.sqrt(self.characteristic_function_results_dict["Im_c_Im_alpha_cov"][1][1])
+
             beta_tot = np.sqrt(beta_R**2 + beta_I**2)
 
             theta = np.arctan2(beta_I, beta_R)
 
-            print (f"Coherent state amplitude : {beta_tot:.4f}, phase : {theta:.4f} rad")
+            beta_tot_error = np.sqrt((beta_R*beta_R_error)**2 + (beta_I*beta_I_error)**2)/beta_tot if beta_tot else 0
+            theta_error = np.sqrt((beta_R*beta_I_error)**2 + (beta_I*beta_R_error)**2)/beta_tot**2 if beta_tot else 0
+
+            print (f"Coherent state amplitude : {beta_tot:.4f} 짹 {beta_tot_error:.4f}, phase : {theta:.4f} 짹 {theta_error:.4f} rad, {theta*180/np.pi:.4f} 짹 {theta_error*180/np.pi:.4f} deg")
 
 
+    def _save_Dirac_simul_1D_data(self, amp, alpha_1_CNOD_amp, amplitude_sweep_list):
+        from datetime import datetime
+
+        now = datetime.now()
+        run_date = now.strftime("%Y%m%d")
+        run_timestamp = now.strftime("%H%M%S")
+
+        save_dir = Path(f"Results/{run_date}/Dirac_simul_1D_raw_data")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        evolution_time = self.Dirac_simul_1D_save_dict["evolution_time"]
+        steady_time = self.Dirac_simul_1D_save_dict["steady_time"]
+        amp_range = self.Dirac_simul_1D_save_dict["amp_range"]
+
+        additional_save_dict = {
+            "amp" : amp,
+            "alpha_1_CNOD_amp" : alpha_1_CNOD_amp,
+            "amplitude_sweep_list" : amplitude_sweep_list,
+        }
+
+        post_selected_data = self.post_selected_data if hasattr(self, "post_selected_data") else np.array([])
+
+        file_name = (
+            f"rabi_{(self.rabi_freq*1e-6):.3f}MHz_"
+            f"evoltime_{(evolution_time*1e6):.1f}us_"
+            f"steadytime_{(steady_time*1e6):.3f}us_"
+            f"amp_range_{amp_range}_"
+            f"Dirac_simul_1D_data.npz"
+        )
+        self.last_Dirac_simul_1D_save_dir = save_dir
+        self.last_Dirac_simul_1D_file_stem = Path(file_name).stem
+
+        np.savez(
+            save_dir / file_name,
+            characteristic_function_1D_data=self.characteristic_function_1D_data,
+            post_selected_data=post_selected_data,
+            save_parameters= self.Dirac_simul_1D_save_dict,
+            save_additional_dict = additional_save_dict
+        )
+
+        if hasattr(self, "state_info_dict"):
+            self._save_state_info_dict_for_Dirac_simul_1D()
+
+    def _save_state_info_dict_for_Dirac_simul_1D(self):
+        if not hasattr(self, "state_info_dict"):
+            return
+        if not hasattr(self, "last_Dirac_simul_1D_save_dir"):
+            return
+
+        save_dir = Path(self.last_Dirac_simul_1D_save_dir)
+        file_stem = getattr(self, "last_Dirac_simul_1D_file_stem", "Dirac_simul_1D_data")
+
+        np.savez(
+            save_dir / f"{file_stem}_state_info.npz",
+            state_info_dict=self.state_info_dict,
+        )
 
 # In[]
 
@@ -2908,6 +3290,17 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
 
         self.is_post_selection = is_post_selection
         self.qubit_phase = qubit_phase
+        self.acquire_delay = acquire_delay
+
+        self.Dirac_simul_1D_save_dict = {
+            "is_post_selection": self.is_post_selection,
+            "acquire_delay": acquire_delay,
+            "qubit_phase": self.qubit_phase,
+            "evolution_time": evolution_time,
+            "steady_time": steady_time,
+            "average_exponent": average_exponent,
+            "amp_range": amp_range,
+        }
 
         # Define pulses
         readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, 
@@ -2919,8 +3312,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse, sidebands_pulse,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
-                                                                   qubits_component, cavity_component)
+        cond_disp_pulse, cavity_drive_pulse, sidebands_pulse, sideband_rise, sideband_fall, sideband_const, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+                                                                   qubits_component, cavity_component, length = steady_time)
         
         rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
                                                                qubits_component, cavity_component, length = evolution_time)
@@ -2954,6 +3347,9 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             
                 with exp_Dirac_simul_1D.section(uid="preparation", alignment=SectionAlignment.LEFT):
                     with exp_Dirac_simul_1D.section(uid="cavity_drive_1", alignment=SectionAlignment.LEFT):
+
+                        # exp_Dirac_simul_1D.play(signal="cavity_drive", pulse=sideband_rise, 
+                        #                         length = evolution_time)
 
                         exp_Dirac_simul_1D.play(signal="cavity_drive", 
                                                 pulse=sidebands_pulse, 
@@ -3014,8 +3410,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             "qubit_drive_if_osc",
             frequency=self.qubits_parameters[qubits_component]["ge_freq_IF"] + detuning_freq,
         )
-        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
-            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line ?대쫫?쇰줈 signal calibration : ?대떦 ?ㅽ뿕 ?쇱떆???곸슜
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency ?ㅼ젙, local oscillator : LO frequency ?ㅼ젙
         )
         exp_Dirac_simul_1D.set_calibration(exp_calibration)
         
@@ -3031,6 +3427,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         self.characteristic_function_1D_results = self.session.run(compiled_exp_Dirac_simul_1D)
         if is_plot_simulation:
             self.simulation_plot(compiled_exp_Dirac_simul_1D, start_time=0, length=20e-6)
+
+
 
 
 # In[]
@@ -3057,7 +3455,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        cond_disp_pulse, cavity_drive_pulse,_,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        cond_disp_pulse, cavity_drive_pulse,_,_,_,_,_ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         phase = qubits_parameters[qubits_component]["readout_phase"]
@@ -3242,7 +3640,7 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
 
-        _, _, sidebands_pulse, sidebands_rise, sidebands_fall, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        _, _, sidebands_pulse, sidebands_rise, sidebands_fall, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
@@ -3379,8 +3777,8 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
             "qubit_drive_if_osc",
             frequency=self.qubits_parameters[qubits_component]["ge_freq_IF"] + qubit_drive_detuning_freq,
         )
-        exp_calibration["drive"] = SignalCalibration( # experimental signal line 이름으로 signal calibration : 해당 실험 일시적 적용
-            oscillator=qubit_drive_oscillator # oscillator : IF frequency 설정, local oscillator : LO frequency 설정
+        exp_calibration["drive"] = SignalCalibration( # experimental signal line ?대쫫?쇰줈 signal calibration : ?대떦 ?ㅽ뿕 ?쇱떆???곸슜
+            oscillator=qubit_drive_oscillator # oscillator : IF frequency ?ㅼ젙, local oscillator : LO frequency ?ㅼ젙
         )
         exp_sideband_pulse_phase.set_calibration(exp_calibration)
 
@@ -3540,12 +3938,14 @@ class Bosonic_experiments(Basic_qubit_characterization_experiments):
                     pi_pulse = pi_pulse, amp = -1*alpha, 
                     prev_uid="qubit_preparation_2", uid1 = "cond_disp_pulse_3", uid2 = "cond_disp_pulse_4", pi_pulse_uid= "pi_pulse_2")
 
-    def sideband_driving(self, exp, sidebands_pulse, cavity_drive_pulse, amplitude, steady_time, is_init_displaced_state=False):
+    def sideband_driving(self, exp, sideband_rise, sideband_fall, sideband_const, cavity_drive_pulse, amplitude, steady_time, is_init_displaced_state=False):
         with exp.section(uid="preparation", alignment=SectionAlignment.RIGHT):
             if is_init_displaced_state:
                 exp.play(signal="cavity_drive", pulse=cavity_drive_pulse, amplitude=amplitude)
-                
-            exp.play(signal="cavity_drive", pulse=sidebands_pulse, length = steady_time)
+            
+            # exp.play(signal="cavity_drive", pulse=sideband_rise)
+            exp.play(signal="cavity_drive", pulse=sideband_const, length = steady_time)
+            # exp.play(signal="cavity_drive", pulse=sideband_fall)
     
     def Dirac_simul(self, exp, sidebands_pulse, rabi_ramp_up, rabi_drive_chunk, rabi_ramp_down, steady_time, evolution_time):
         with exp.section(uid="preparation", alignment=SectionAlignment.LEFT):

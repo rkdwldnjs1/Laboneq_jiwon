@@ -61,8 +61,9 @@ class sFit():
         elif self.fit_type == 'Poly2':
             return self.Poly2
         
-    def _curve_fit(self):
-        return curve_fit(self.func, self.xdata, self.ydata, p0 = self.initial_guess, maxfev=10000)
+    def _curve_fit(self, bounds=(-np.inf, np.inf), sigma=None, absolute_sigma=False):
+        return curve_fit(self.func, self.xdata, self.ydata, p0 = self.initial_guess, 
+                         maxfev=10000, method='trf', bounds=bounds, sigma=sigma, absolute_sigma=absolute_sigma)
     
     def smart_guess(self):
         
@@ -74,7 +75,7 @@ class sFit():
             
             [freq, delta] = self._fft_results()
             
-            print("initial_guess : amp={0}, freq={1}, delta={2}, offset={3}".format(Amp, freq, delta, Offset))
+            # print("initial_guess : amp={0}, freq={1}, delta={2}, offset={3}".format(Amp, freq, delta, Offset))
             
             return [Amp, freq, delta, Offset]
         
@@ -112,7 +113,7 @@ class sFit():
             Offset = self.ydata[-1]
             t0 = 0
 
-            print("initial_guess : amp={0}, sigma={1}, offset={2}, t0={3}".format(Amp, sigma, Offset, t0))
+            # print("initial_guess : amp={0}, sigma={1}, offset={2}, t0={3}".format(Amp, sigma, Offset, t0))
             
             return [Amp, sigma, Offset, t0]
         
@@ -121,13 +122,13 @@ class sFit():
             Amp = (max(self.ydata) - min(self.ydata))/2
             [freq, delta] = self._fft_results()
             sigma = 1
-            Offset = np.mean(self.ydata)
-            t0 = np.mean(self.xdata)
+            Offset = self.ydata[0]
+            # t0 = np.mean(self.xdata)
 
-            print("initial_guess : amp={0}, freq={1}, delta={2}, offset={3}, t0={4}".format(Amp, freq, delta, Offset, t0))
+            # print("initial_guess : amp={0}, freq={1}, delta={2}, offset={3}".format(Amp, freq, delta, Offset))
             
             
-            return [Amp, freq, sigma, delta, Offset, t0]
+            return [Amp, freq, sigma, delta, Offset]
 
 
     
@@ -217,7 +218,8 @@ class sFit():
         return (A*(exp( - abs( alphaSize ) * exp( -kappa*t ) )) + offset).astype(np.float64)
     def Gaussian(self, t, A, sigma, offset, t0): # 3 args
         return (A * exp(-((t-t0)**2)/(2*sigma**2)) + offset).astype(np.float64)
-    def GaussianCos(self, t, A, f, sigma, delta, offset, t0): # 5 args
-        return (A * exp(-((t-t0)**2)/(2*sigma**2)) * cos((t-t0)*2*pi*f + delta) + offset).astype(np.float64)
+    def GaussianCos(self, t, A, f, sigma, delta, offset): # 5 args
+        return (A * exp(-((t)**2)/(2*sigma**2)) * cos((t)*2*pi*f + delta) + offset).astype(np.float64)
+        # return (A * exp(-((t-t0)**2)/(2*sigma**2)) * cos((t-t0)*2*pi*f + delta) + offset).astype(np.float64)
     def Storage_Characterization(self, t, A, omega, T1, delta_f, offset): # 5 args
         return (A * cos(omega*exp(-t/(2*T1)*cos(2*pi*delta_f*t)) + offset)).astype(np.float64)

@@ -29,7 +29,7 @@ from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect impo
 from laboneq.dsl.experiment import pulse_library
 from laboneq.contrib.bloch_simulator_pulse_plotter.inspector.update_inspect import (
     pulse_inspector,
-)
+)                                                                                 
 
 
 # In[] initial parameters for experiment (6 components available)
@@ -141,8 +141,10 @@ physical_ports = {
         },
     }
 }
+
 # In[] # qubits_parameters, cavity_parameters
 ### These parameters will be utilized in defining experimental sequences.
+
 qubits_parameters = {
     # two(cr) qubit gate : each parameter is assigned to each qubit except ef_frequency;
 
@@ -150,7 +152,7 @@ qubits_parameters = {
 
         #port 1 (15-1)
 
-        "ge_frequency" : 4.3077e9 + 0.23e6,
+        "ge_frequency" : 4.3077e9 + 0.23e6 - 0.016e6,
         "ef_frequency" : 4.2975e9, #4.275e9, #4.3865e9,
         "readout_frequency" : 7.66475e9 - 0.6e6,   # 7.6642e9 - 0.1e6, 
         ### readout parameters ###
@@ -161,27 +163,27 @@ qubits_parameters = {
 
         "drachma_readout_pulse_length": 1400e-9,
         "drachma_readout_integration_length": (1120)*1e-9,
-        "drachma_readout_amp": 0.23,
+        "drachma_readout_amp": 0.26,
 
-        "readout_phase": (25) * np.pi/180,
+        "readout_phase": (-10) * np.pi/180,
         ### drive parameters ###
-        "drive_amp" : 0.52, 
+        "drive_amp" : 0.556, 
         "drive_pulse_length": 64e-9,
         "drive_beta": 0.035,
         
         "pi2_length": 64e-9,
-        "pi2_amp": 0.26,
+        "pi2_amp": 0.278,
         "pi2_beta": 0.035,
 
         "pi_length": 64e-9,
-        "pi_amp": 0.52,
+        "pi_amp": 0.556,
         "pi_beta": 0.035,
 
         "cond_pi_length": 2048e-9,
         "cond_pi_amp": 0.01406,
         "cond_pi_beta": 0.035,
 
-        "rabi_drive_amp": 0.1852,
+        "rabi_drive_amp": 0.3204,
         "rabi_ramp_length": 120e-9,
 
         ### extra parameters ###
@@ -309,12 +311,12 @@ cavity_parameters = {
     'm0': { # mm2 - qubit 4.394GHz
         "mode_frequency": 5.152159e9 + 0.092e6 - 0.227e6/2, # center of g and e freq
         "cavity_drive_length": 40e-9, # this should be as short as possible to cover wide frequency range
-        "cavity_drive_amp": 0.071*4, #(this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_cavity_drive_amp": 0.071, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
+        "cavity_drive_amp": 0.068*4, #(this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_cavity_drive_amp": 0.068, # 1 when it is not found yet. (This is amp when photon = 1) (this should be same with scaling_factor in disp_amp_calibration_parity
 
         "cond_disp_pulse_length": 200e-9, #200e-9,
-        "cond_disp_pulse_amp": 0.0957, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
-        "alpha_1_CNOD_amp": 0.0957, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
+        "cond_disp_pulse_amp": 0.09, #0.0446j, # (this is the maximum amplitude range, and this goes to amp of experiment)
+        "alpha_1_CNOD_amp": 0.09, # 1 when it is not found yet. (this should be same with scaling_factor in CNOD calibration)
 
         # (omega_d : w_LO + w_IF , omega_e or g : w_LO + w_IF + cond_disp_pulse_frequency)
         "cavity_mode_chi": -0.227e6, 
@@ -334,17 +336,17 @@ cavity_parameters = {
         # "sideband_amp_l" : 0.15,
         # "sideband_amp_h" : 0.15,
         # "sideband_phase" : 0, # in radians
-        # "sideband_att_l" : 416.4209, # The larger value, the smaller attenuation
-        # "sideband_att_h" : 354.3604, #239, # The larger value, the smaller attenuation
+        # "sideband_att_l" : 403.5, # The larger value, the smaller attenuation
+        # "sideband_att_h" : 343.7, #239, # The larger value, the smaller attenuation
         # "sideband_extra_phase": np.pi, # in radians
 
-        "sideband_frequency_l" : 10e6, # input unit is Hz
-        "sideband_frequency_h" : 10e6,
+        "sideband_frequency_l" : 25e6, # input unit is Hz
+        "sideband_frequency_h" : 25e6,
         "sideband_amp_l" : 0.1,
         "sideband_amp_h" : 0.1,
         "sideband_phase" : 0, # in radians
-        "sideband_att_l" : 384.85,  # The larger value, the smaller attenuation
-        "sideband_att_h" : 346.3965,  # The larger value, the smaller attenuation
+        "sideband_att_l" : 435.5,  # The larger value, the smaller attenuation
+        "sideband_att_h" : 333.4,  # The larger value, the smaller attenuation
         "sideband_extra_phase": np.pi, # in radians
 
         "steady_time": 5e-6,
@@ -441,18 +443,18 @@ my_run = Bosonic_experiments(physical_ports, qubits_parameters, cavity_parameter
 my_run.prop_delay_calibration(line = "readout", average_exponent=12, readout_pulse_type = "const")
 
 # %% 
-my_run.nopi_pi(average_exponent=12, phase = 25, readout_pulse_type="gaussian_square",
+my_run.nopi_pi(average_exponent=12, phase = -10, readout_pulse_type="gaussian_square",
                             readout_weighting_type ="cavity_trajectory", is_plot_simulation=False)
 ## readout weighting is not important for above experiment ; result is obtained through RAW data
-my_run.single_shot_nopi_pi(npts_exponent = 12, phase = 25, readout_pulse_type="gaussian_square",
+my_run.single_shot_nopi_pi(npts_exponent = 12, phase = -10, readout_pulse_type="gaussian_square",
                             readout_weighting_type ="cavity_trajectory", is_plot_simulation=False)
 my_run.plot_nopi_pi(npts = 112)
 
 # %%
-my_run.nopi_pi(average_exponent=12, phase = 25, readout_pulse_type="drachma",
+my_run.nopi_pi(average_exponent=12, phase = 0, readout_pulse_type="drachma",
                             readout_weighting_type ="drachma", is_plot_simulation=False) 
 ## readout weighting is not important for above experiment ; result is obtained through RAW data
-my_run.single_shot_nopi_pi(npts_exponent = 12, phase = 25, readout_pulse_type="drachma",
+my_run.single_shot_nopi_pi(npts_exponent = 12, phase = 0, readout_pulse_type="drachma",
                             readout_weighting_type ="drachma", is_plot_simulation=False)
 my_run.plot_nopi_pi(npts = 112)
 
@@ -463,14 +465,17 @@ my_run.T1(average_exponent=10, duration = 150e-6, npts = 51, is_plot_simulation=
 my_run.plot_T1()
 
 # In[]
-my_run.qubits_parameters['q0']["pi2_amp"] = 0.26 
+my_run.qubits_parameters['q0']["pi2_amp"] = 0.278
 
-my_run.Pi2_cal(average_exponent=11, start = 0, npts = 12, is_plot_simulation=False)
+# my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.3183
+# my_run.qubits_parameters['q0']["rabi_ramp_length"] = 240e-9
+
+my_run.Pi2_cal(average_exponent=11, start = 0, npts = 12, is_plot_simulation=False, is_ramp_pulse = False)
 my_run.plot_Pi2_cal()
 
 # In[]
-my_run.qubits_parameters['q0']["pi_amp"] = 0.52
-my_run.qubits_parameters['q0']["cond_pi_amp"] = 0.0147
+my_run.qubits_parameters['q0']["pi_amp"] = 0.556
+my_run.qubits_parameters['q0']["cond_pi_amp"] = 0.0192
 
 my_run.Pi_cal(average_exponent=11, npts = 12, is_plot_simulation=False, is_cond_pulse= False)
 my_run.plot_Pi_cal()
@@ -479,7 +484,7 @@ my_run.plot_Pi_cal()
 my_run.Ramsey(is_echo = False, n_pi_pulse=1, # for CP or CPMG
               qubit_phase = 0, # 0 CP, pi/2 CPMG
               detuning = 0.2e6, 
-              average_exponent=10, duration = 20e-6, npts = 40,
+              average_exponent=10, duration = 20e-6, npts = 80,
               is_zz_interaction= False,
               control_qubit= 2,
               is_plot_simulation= False)
@@ -487,25 +492,25 @@ my_run.plot_Ramsey(is_fourier_transform=True, is_fit = True)
 
 
 # In[]
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.02
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1
 
-my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.1
-my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.1
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054
 my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
 my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
 
 
 my_run.Ramsey_with_photon(is_echo = False,
             detuning = 0.0e6,
-            cavity_freq_detuning= 0e6, # memory mode weak driving (when sideband driving, it should be zero)
-            average_exponent=10, duration = 5e-6, npts = 50, #duration/npts = integer
-            steady_time = 1.025e-6,
+            cavity_freq_detuning= 10e6, # memory mode weak driving (when sideband driving, it should be zero)
+            average_exponent=10, duration = 20e-6, npts = 80, #duration/npts = integer
+            steady_time = 1.0e-6,
             delay_after_disp_drive = 0e-6,
             qubit_extra_phase= 0,
-            is_constant_drive= False,
-            is_sideband_drive= True,
+            is_constant_drive= True,
+            is_sideband_drive= False,
             is_displacement_drive = False, ##### cautious
-            is_plot_simulation= False)
+            is_plot_simulation= True)
 
 my_run.plot_Ramsey(is_ramsey_with_photon = True, is_fourier_transform=True)
 
@@ -514,9 +519,9 @@ my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
 my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
 
 my_run.Ramsey_amp_sweep(is_echo = False, detuning = 0.2e6, 
-                        cavity_freq_detuning= -10e6, # memory mode weak driving (when sideband driving, it should be zero)
+                        cavity_freq_detuning= 5e6, # memory mode weak driving (when sideband driving, it should be zero)
               average_exponent=9, duration = 10e-6, npts = 50, #duration/npts = integer
-              sweep_start = 0.0, sweep_stop = 0.2, sweep_npts = 11, # sweep_start = -np.pi/16, sweep_stop = np.pi/16, sweep_npts = 11,
+              sweep_start = 0.0, sweep_stop = 0.1, sweep_npts = 11, # sweep_start = -np.pi/16, sweep_stop = np.pi/16, sweep_npts = 11,
               fixed_sideband_amp_l = 0, # if not zero, sideband_amp_l is fixed during amp sweep. only sideband_amp_h is swept.
               # in case is_sideband_phase_sweep = True, this parameter is used as fixed amplitude for amp_l and amp_h 
               kappa = 0.0047, chi = 0.227/2, # in MHz unit # chi = chi_ge/2
@@ -591,9 +596,9 @@ my_run.plot_error_amplification(is_drag_beta_calibration = True)
 # my_run.Rabi_amplitude(average_exponent=12, npts = 101, is_plot_simulation=True)
 
 # In[]
-my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.2688
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.6085
 
-my_run.Rabi_length(average_exponent=9, duration = 1000e-9, start_time = 16e-9, npts = 100,
+my_run.Rabi_length(average_exponent=8, duration = 1000e-9, start_time = 0e-9, npts = 200,
                    detuning_freq = 0e6, # detuned freq for qubit drive
                    is_single_shot = False, is_plot_simulation=False)
 my_run.plot_Rabi_length(is_normalize = True)
@@ -601,30 +606,48 @@ my_run.plot_Rabi_length(is_normalize = True)
 # In[]
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1
 
-my_run.cavity_parameters['m0']["sideband_frequency_l"] = 10e6 # 15e6
-my_run.cavity_parameters['m0']["sideband_frequency_h"] = 10e6 # 15e6
-my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.1 # 0.15
-my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.1 # 0.15
-my_run.cavity_parameters['m0']["sideband_att_l"] = 384.85
-my_run.cavity_parameters['m0']["sideband_att_h"] = 346.3965
+# my_run.cavity_parameters['m0']["sideband_frequency_l"] = 20e6 
+# my_run.cavity_parameters['m0']["sideband_frequency_h"] = 20e6 
+# my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054 * 2
+# my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054 * 2
+# my_run.cavity_parameters['m0']["sideband_att_l"] = 454.103
+# my_run.cavity_parameters['m0']["sideband_att_h"] = 370
 
-# my_run.cavity_parameters['m0']["sideband_frequency_l"] = 15e6 # 15e6
-# my_run.cavity_parameters['m0']["sideband_frequency_h"] = 15e6 # 15e6
-# my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.15 # 0.15
-# my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.15 # 0.15
-# my_run.cavity_parameters['m0']["sideband_att_l"] = 397.4415 
-# my_run.cavity_parameters['m0']["sideband_att_h"] = 339.234
+my_run.cavity_parameters['m0']["sideband_frequency_l"] = 15e6 # 15e6
+my_run.cavity_parameters['m0']["sideband_frequency_h"] = 15e6 # 15e6
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054 * 1.5 # 0.15
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054 * 1.5 # 0.15
+my_run.cavity_parameters['m0']["sideband_att_l"] = 412.2
+my_run.cavity_parameters['m0']["sideband_att_h"] = 351.4
 
-# my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
-# my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
+my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
+my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
 
-my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.2969
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.7808
 
-my_run.Rabi_length_with_photon(average_exponent=8, duration = 5000e-9, start_time = 16e-9, npts = 500,
-                   detuning_freq = -0.473e6, #-0.464e6, # detuned freq for qubit drive
-                   steady_time = 1.025e-6, is_sideband_drive= True,
+my_run.Rabi_length_with_photon(average_exponent=8, duration = 3000e-9, start_time = 16e-9, npts = 800,
+                   detuning_freq = -0.153e6, #-0.464e6, # detuned freq for qubit drive
+                   steady_time = 1.0e-6, is_sideband_drive= True,
                    is_single_shot = False, is_plot_simulation=False)
-my_run.plot_Rabi_length(is_normalize = True)
+my_run.plot_Rabi_length(is_normalize = True, is_save_data = False)
+
+# In[] sweep steady time of SB drive
+my_run.cavity_parameters['m0']["sideband_frequency_l"] = 25e6 
+my_run.cavity_parameters['m0']["sideband_frequency_h"] = 25e6 
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054*2.5
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054*2.5
+my_run.cavity_parameters['m0']["sideband_att_l"] = 440.06
+my_run.cavity_parameters['m0']["sideband_att_h"] = 338.97
+
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.7808
+
+my_run.sweep_Rabi_length_with_photon(average_exponent = 8, duration = 3000e-9, 
+                                      start_time = 0e-6, # start_time is for preventing very short pulse duration/npts.
+                                      npts = 800, detuning_freq = -0.153e6, steady_time_start = 0.995e-6,
+                                      steady_time_stop = 1.005e-6, steady_time_npts = 11,
+                                      is_sideband_drive= True,
+                                      is_save_data = True,
+                                      is_single_shot = False, is_plot_simulation = False)
 
 # In[]
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1
@@ -704,12 +727,12 @@ my_run.plot_cavity_pi_nopi()
 
 # In[]
 my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.4 # sweep variable
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.071
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.0715
 
-my_run.CNOD_calibration(average_exponent=10, amp_range=1j,  npts= 61, qubit_phase = 0, 
+my_run.CNOD_calibration(average_exponent=11, amp_range=1j,  npts= 61, qubit_phase = 0, 
                         is_calibrated_geo_phase = False,
                         is_displaced_state= True, is_plot_simulation=False)
-my_run.plot_CNOD_calibration(scaling_factor= 0.0957)
+my_run.plot_CNOD_calibration(scaling_factor= 0.0908, is_normalize=True)
 
 # In[]
 my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0957*5
@@ -726,12 +749,12 @@ my_run.plot_CNOD_geophase_calibration(is_normalize=True)
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.3 # sweep variable
 my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 1 # 이게 1이어야 함.. 코드 내부에서 amp 자리에 CNOD_alpha_1_amp가 들어가도록 되어 있음.
 # 이제까지 중복해서 곱해지는 현상 떄문에 원했던 amp보다 덜 들어가는 상황이었음.
-my_run.cavity_parameters['m0']['alpha_1_CNOD_amp'] = 0.0954
+my_run.cavity_parameters['m0']['alpha_1_CNOD_amp'] = 0.093
 
 my_run.disp_pulse_calibration_geophase(average_exponent=10, amp_sweep = 1, amp_npts=51, is_plot_simulation=False)
 my_run.plot_disp_pulse_calibration_geophase()
 
-# In[] Not proper in small chi regime
+# In[] Not proper in small chi regime (disp_pulse_calibration_parity)
 my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.2 # sweep variable
 
 my_run.disp_pulse_calibration_parity(average_exponent=10, amp_start = -1, amp_stop=1, amp_npts = 101, is_plot_simulation=False)
@@ -803,50 +826,106 @@ my_run.calibrate_sideband_pulse_phase(average_exponent=10, sidebands_pulse_lengt
 my_run.plot_calibrate_sideband_pulse_phase(is_normalize=True, is_fig_plot=True)
 
 
-# In[] Dirac simulation 1D
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.071*4 # sweep variable for wigner
-my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.072
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0956 * 5
-my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.0956
+# In[]
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.1
 
-my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.1
-my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.1
+# my_run.cavity_parameters['m0']["sideband_frequency_l"] = 10e6 
+# my_run.cavity_parameters['m0']["sideband_frequency_h"] = 10e6 
+# my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054
+# my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054
+# my_run.cavity_parameters['m0']["sideband_att_l"] = 420
+# my_run.cavity_parameters['m0']["sideband_att_h"] = 380
+
+my_run.cavity_parameters['m0']["sideband_frequency_l"] = 15e6 # 15e6
+my_run.cavity_parameters['m0']["sideband_frequency_h"] = 15e6 # 15e6
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054 * 1.5 # 0.15
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054 * 1.5 # 0.15
+my_run.cavity_parameters['m0']["sideband_att_l"] = 424
+my_run.cavity_parameters['m0']["sideband_att_h"] = 360
+
 my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
 my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
 
-my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.2739
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.3227
 
-my_run.Dirac_simul_1D(average_exponent=10, npts = 61, amp_range = 1, acquire_delay = 200e-9, detuning_freq = -0.476e6, 
-                      steady_time = 1.0e-6, evolution_time = 2.1e-6, qubit_phase = 0, is_post_selection=True, is_plot_simulation=True)
-my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_plot_G=True, is_plot_E=True)
+my_run.Rabi_length_with_photon(average_exponent=8, duration = 5000e-9, start_time = 0e-9, npts = 500,
+                   detuning_freq = -0.155e6, #-0.464e6, # detuned freq for qubit drive
+                   steady_time = 0.999e-6, is_sideband_drive= True,
+                   is_single_shot = False, is_plot_simulation=False)
+my_run.plot_Rabi_length(is_normalize = True, is_save_data = False)
 
-'''trajectory = []
-for evolution_time in np.linspace(0, 2.1e-6, 21):
-    my_run.Dirac_simul_1D(average_exponent=10, npts = 61, amp_range = 1, acquire_delay = 200e-9, detuning_freq = -0.476e6, 
-                      steady_time = 1.0e-6, evolution_time = evolution_time, qubit_phase = 0, is_post_selection=True, is_plot_simulation=False)
-    x_grid, y_grid, G_data, E_data, se_G_data = my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_plot_G=True, is_plot_E=True)
-    trajectory.append((x_grid, y_grid, G_data))'''
+
+
+
+# In[] Dirac simulation 1D
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.07*4 # sweep variable for wigner
+my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.07
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.09 * 5
+my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.09
+
+my_run.cavity_parameters['m0']["sideband_frequency_l"] = 10e6 # 15e6
+my_run.cavity_parameters['m0']["sideband_frequency_h"] = 10e6 # 15e6
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054
+my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
+my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
+my_run.cavity_parameters['m0']["sideband_att_l"] = 420
+my_run.cavity_parameters['m0']["sideband_att_h"] = 380
+
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.3224
+
+my_run.Dirac_simul_1D(average_exponent=11, npts = 61, amp_range = 0.6, acquire_delay = 200e-9, detuning_freq = -0.155e6, 
+                      steady_time = 1.024e-6, evolution_time = 0.5e-6, qubit_phase = -np.pi/2, is_post_selection=True, is_plot_simulation=False)
+my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_store_values = True)
+
+my_run.Dirac_simul_1D(average_exponent=11, npts = 61, amp_range = 0.6j, acquire_delay = 200e-9, detuning_freq = -0.155e6, 
+                      steady_time = 1.024e-6, evolution_time = 0.5e-6, qubit_phase = -np.pi/2, is_post_selection=True, is_plot_simulation=False)
+my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_store_values = True)
+
+my_run.get_state_info()
 
 # In[] with post selection (singleshot measure를 해야해서 measure point 수 한계가 있음)
 
 ## before running below code, drachma nopi-pi code should be conducted to get threshold for post-selection
 
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.071*4 # sweep variable for wigner
-my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.071
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0957 * 5
-my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.0957
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.0715*4 # sweep variable for wigner
+my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.0715
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0908 * 5
+my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.0908
 
-my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.1
-my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.1
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054 * 2
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054 * 2
 my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
-my_run.cavity_parameters['m0']["steady_time"] = 1.025e-6
+my_run.cavity_parameters['m0']["steady_time"] = 1.013e-6
 my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
 
 
 # 'cavity_drive_amp' * amplitude에 해당하는 displaced state 형성
 
-my_run.characteristic_function_1D(average_exponent=10, npts = 61, amp_range = 1, amplitude = 0.5j,
-                                  acquire_delay = 120e-9, 
+# real alpha sweep
+my_run.characteristic_function_1D(average_exponent=10, npts = 61, amp_range = 0.8, amplitude = 1,
+                                  acquire_delay = 7400e-9, 
+                                  alpha = 1, # for cat state 
+                                  beta = 1, # for cat state
+                                  qubit_phase = 0, chunk_count = 81, # -np.pi/2 : Imag of characteristic function
+                                    is_coherent_state=False,
+                                    is_coherent_state_pi = False,
+                                    is_schrodinger_cat_state=False,
+                                    is_schrodinger_cat_state_2=False,
+                                    is_cat_state=False,
+                                    is_cat_state_2=False,
+                                    is_cat_and_back=False,
+                                    is_sideband_drive=True,
+                                    is_post_selection=False,
+                                    is_plot_simulation=False)
+
+my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_store_values = True)
+
+# In[]
+
+# imag alpha sweep
+my_run.characteristic_function_1D(average_exponent=10, npts = 61, amp_range = 0.6j, amplitude = 1j,
+                                  acquire_delay = 7400e-9, 
                                   alpha = 1, # for cat state 
                                   beta = 1, # for cat state
                                   qubit_phase = -np.pi/2, chunk_count = 61, # -np.pi/2 : Imag of characteristic function
@@ -858,10 +937,11 @@ my_run.characteristic_function_1D(average_exponent=10, npts = 61, amp_range = 1,
                                     is_cat_state_2=False,
                                     is_cat_and_back=False,
                                     is_sideband_drive=False,
-                                    is_post_selection=False,
+                                    is_post_selection=True,
                                     is_plot_simulation=False)
 
 my_run.plot_characteristic_function_measurement_1D(is_normalize = True, is_store_values = True)
+
 my_run.get_state_info()
 
 
@@ -869,27 +949,28 @@ my_run.get_state_info()
 
 ## before running below code, drachma nopi-pi code should be conducted to get threshold for post-selection
 
-my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.071*6 # sweep variable for wigner
-my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.071
-my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0911 * 5
-my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.0911
+my_run.cavity_parameters['m0']['cavity_drive_amp'] = 0.0715*6 # sweep variable for wigner
+my_run.cavity_parameters['m0']['alpha_1_cavity_drive_amp'] = 0.0715
+my_run.cavity_parameters['m0']['cond_disp_pulse_amp'] = 0.0908 * 5
+my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.0908
 
 my_run.cavity_parameters['m0']["sideband_frequency_l"] = 10e6 # 15e6
 my_run.cavity_parameters['m0']["sideband_frequency_h"] = 10e6 # 15e6
-my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.1
-my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.1
+my_run.cavity_parameters['m0']['sideband_amp_l'] = 0.054
+my_run.cavity_parameters['m0']['sideband_amp_h'] = 0.054
 my_run.cavity_parameters['m0']['sideband_phase'] = np.pi/2
 my_run.cavity_parameters['m0']['sideband_extra_phase'] = np.pi
-my_run.cavity_parameters['m0']["steady_time"] = 1.075e-6
+my_run.cavity_parameters['m0']["steady_time"] = 1.025e-6
 
-my_run.cavity_parameters['m0']["sideband_att_l"] = 396.738
-my_run.cavity_parameters['m0']["sideband_att_h"] = 356.827
+my_run.cavity_parameters['m0']["sideband_att_l"] = 398.35
+my_run.cavity_parameters['m0']["sideband_att_h"] = 366.896
 
+my_run.qubits_parameters['q0']["rabi_drive_amp"] = 0.3202
 
 # 'cavity_drive_amp' * amplitude에 해당하는 displaced state 형성
 # 'cavity_drive_amp'/(2*'alpha_1_cavity_drive_amp') 사이즈에 해당하는 Re-Im plane plot in case of wigner
 
-my_run.wigner_characteristic_function_2D(average_exponent=8, npts_x = 21, npts_y = 21, amplitude = 0.166, #amplitude for coherent state
+my_run.wigner_characteristic_function_2D(average_exponent=9, npts_x = 21, npts_y = 21, amplitude = 0.3, #amplitude for coherent state
                           acquire_delay= 200e-9,
                           alpha= 0.5, beta= -0.05,
                           qubit_phase = -np.pi/2,
@@ -905,7 +986,7 @@ my_run.wigner_characteristic_function_2D(average_exponent=8, npts_x = 21, npts_y
                           is_sideband_drive=True,
                           is_init_displaced_state=False,
                           is_Dirac_simul = False,
-                          evolution_time_for_Dirac_simul = 1.5e-6,
+                          evolution_time_for_Dirac_simul = 4e-6,
                           is_post_selection= False,
                           is_plot_simulation=False)
 
@@ -947,7 +1028,7 @@ my_run.cavity_parameters['m0']["alpha_1_CNOD_amp"] = 0.087
 my_run.wigner_characteristic_function_2D(average_exponent=9, npts_x = 11, npts_y = 11, amplitude = 0.375, #amplitude for coherent state
                           is_wigner_function= True,
                           is_coherent_state = False, 
-                          is_coherent_state_pi = True,
+                          is_coherent_state_pi = False,
                           is_schrodinger_cat_state= False, 
                           is_schrodinger_cat_state_2=False,
                           is_cat_state=False,

@@ -765,7 +765,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         plt.show()
 # In[]            
-    def Pi2_cal(self, average_exponent = 12, start = 0, npts = 12, is_plot_simulation = False):
+    def Pi2_cal(self, average_exponent = 12, start = 0, npts = 12, is_plot_simulation = False, is_ramp_pulse = False):
         
         device_setup = self.device_setup
         qubits_parameters = self.qubits_parameters
@@ -779,6 +779,9 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
+
+        rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
+                                                               qubits_component, cavity_component, length = 1e-6)
         
         phase = qubits_parameters[qubits_component]["readout_phase"]
 
@@ -819,9 +822,15 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 with exp_pi2_cal.section(uid="pi2_pulses", alignment=SectionAlignment.RIGHT):
                     @repeat(pulse_count, exp_pi2_cal)
                     def play_pi2():
-                        exp_pi2_cal.play(signal = "drive", 
+                        if is_ramp_pulse:
+                            exp_pi2_cal.play(signal = "drive", 
+                                         pulse = rabi_ramp_up)
+                            # exp_pi_cal.play(signal = "drive", 
+                            #              pulse = rabi_ramp_down)
+                        else:
+                            exp_pi2_cal.play(signal = "drive", 
                                         pulse = pi2_pulse)
-            
+                        
                 with exp_pi2_cal.section(uid="measure", play_after="pi2_pulses"):
                     exp_pi2_cal.play(signal="measure", pulse=readout_pulse, phase = phase)
                     exp_pi2_cal.acquire(
@@ -910,6 +919,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         pi2_pulse, pi_pulse, _ = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
+
         
         phase = qubits_parameters[qubits_component]["readout_phase"]
 
@@ -928,6 +938,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                 amplitude = qubits_parameters[qubits_component]["pi_amp"],
                 beta = qubits_parameters[qubits_component]["pi_beta"]
             )
+
         
         pulse_count = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
         
@@ -969,6 +980,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
                     def play_pi():
                         exp_pi_cal.play(signal = "drive", 
                                          pulse = pi_pulse)
+                        
                             
                 with exp_pi_cal.section(uid="measure", play_after="pi_pulses"):
                     exp_pi_cal.play(signal="measure", pulse=readout_pulse, phase = phase)
@@ -1226,7 +1238,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         drive_pulse_pi2, drive_pulse_pi, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        _, cavity_drive_pulse, sidebands_pulse, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        _, cavity_drive_pulse, sidebands_pulse, _, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         # cavity_drive_constant_chunk = pulse_library.const(
@@ -1934,7 +1946,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         drive_pulse_pi2, drive_pulse_pi, cond_pi_pulse = self.pulse_generator("qubit_control", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        _, cavity_drive_pulse, sidebands_pulse, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        _, cavity_drive_pulse, sidebands_pulse, _, _, _, cavity_drive_constant = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
 
         
@@ -2263,26 +2275,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
 
         
-        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-        #     def decorator(f):
-        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
-        #             with exp.match(sweep_parameter=count):
-        #                 for v in count.values:
-        #                     with exp.case(v):
-        #                         if v == 0:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #                         else:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             for _ in range(int(v)):
-        #                                 f()
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #         else:
-        #             for _ in range(count):
-        #                 f()
-
-        #     return decorator
-        
         if is_single_shot :
             averaging_mode = AveragingMode.SINGLE_SHOT
             self.is_single_shot = True
@@ -2383,34 +2375,13 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        _, _, sidebands_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
         
         rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
                                                                qubits_component, cavity_component, length = duration)
 
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
-
-        
-        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-        #     def decorator(f):
-        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
-        #             with exp.match(sweep_parameter=count):
-        #                 for v in count.values:
-        #                     with exp.case(v):
-        #                         if v == 0:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #                         else:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             for _ in range(int(v)):
-        #                                 f()
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #         else:
-        #             for _ in range(count):
-        #                 f()
-
-        #     return decorator
         
         if is_single_shot :
             averaging_mode = AveragingMode.SINGLE_SHOT
@@ -2439,9 +2410,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             with exp_rabi_length_with_photon.sweep(uid="rabi_length_sweep", parameter= rabi_length_sweep, auto_chunking=True):
                 
                 with exp_rabi_length_with_photon.section(uid="cavity_drive_1", alignment=SectionAlignment.LEFT):
-                    # @repeat(int(steady_time/(duration/npts)), exp_ramsey_with_photon)
-                    # @repeat(int((start_time+duration+steady_time+2e-6)/1e-6), exp_rabi_length_with_photon) # 2e-6 extra time
-                    # def play_cavity_drive():
+
                     exp_rabi_length_with_photon.play(signal="cavity_drive", 
                                                      pulse=sidebands_pulse, 
                                                      length = start_time+rabi_length_sweep*(duration/npts)+steady_time+
@@ -2498,9 +2467,53 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         if is_plot_simulation:
             self.simulation_plot(compiled_experiment_rabi, start_time=0, length=20e-6, component=qubits_component)
             show_pulse_sheet("rabi", compiled_experiment_rabi)
+    
+    def sweep_Rabi_length_with_photon(self, average_exponent = 12, duration = 100e-6, 
+                                      start_time = 0e-6, # start_time is for preventing very short pulse duration/npts.
+                                      npts = 100, detuning_freq = 0, steady_time_start = 1e-6,
+                                      steady_time_stop = 2e-6, steady_time_npts = 11,
+                                      is_sideband_drive= True,
+                                      is_save_data = False,
+                                      is_single_shot = True, is_plot_simulation = False):
+        
+        qubits_parameters = self.qubits_parameters
+        cavity_parameters = self.cavity_parameters
 
+        qubits_component = list(qubits_parameters.keys())[self.which_qubit]
+        cavity_component = list(cavity_parameters.keys())[self.which_mode]
 
-    def plot_Rabi_length(self, is_normalize = True, is_fit = True):
+        sweep_values = np.linspace(steady_time_start, steady_time_stop, steady_time_npts)
+
+        decay_rate_list = []
+        decay_rate_err_list = []
+
+        for steady_time in sweep_values:
+
+            self.Rabi_length_with_photon(average_exponent = average_exponent, duration = duration, 
+                                         start_time = start_time,
+                                        npts = npts, detuning_freq = detuning_freq, steady_time = steady_time,
+                                        is_sideband_drive= is_sideband_drive,
+                                        is_single_shot = is_single_shot, is_plot_simulation = False)
+            
+            popt, pcov = self.plot_Rabi_length(is_normalize=True, is_fit=True, is_save_data=is_save_data)
+
+            decay_rate_list.append(popt[2]*1e-6) # [MHz]
+            decay_rate_err_list.append(np.sqrt(np.diag(pcov)[2])*1e-6) # [MHz]
+        
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+        ax.errorbar(sweep_values*1e6, decay_rate_list, yerr=decay_rate_err_list, fmt='o', 
+                    color = 'blue', ecolor='black', capsize=5, markersize=8, mfc=(0,0,1,0.5), mec = (0,0,0,1))
+        ax.set_xlabel("Steady Time (us)")
+        ax.set_ylabel("Decay Rate (MHz)")
+        ax.set_title("Decay Rate vs Steady Time in Rabi Length with Photon")
+        ax.tick_params(axis='both', which='major', labelsize=16)
+
+        self.save_results(experiment_name="Rabi_length_with_photon_sweep_steady_time")
+        plt.show()
+    
+
+    def plot_Rabi_length(self, is_normalize = True, is_fit = True, is_save_data = False):
         
         if self.is_single_shot:
         ### data processing ###############################################################
@@ -2566,6 +2579,8 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             _,freq,decay_rate,_,_ = popt
             _,freq_err,decay_rate_err,_,_ = np.sqrt(np.diag(pcov))
 
+            self.rabi_freq = freq
+
             # Var(1/X) = Var(X)/X^4 => std(1/X) = std(X)/X^2
 
             ax.plot(time*1e6, sfit1.func(time, *popt))
@@ -2579,8 +2594,53 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
             ax.set_title("Rabi_length measurement", fontsize=20)
             ax.set_xlabel("Time (us)", fontsize=20)
 
+        if is_save_data:
+            fit_result_dict = {}
+            if is_fit:
+                fit_result_dict = {
+                    "popt": popt,
+                    "pcov": pcov,
+                    "rabi_freq": self.rabi_freq,
+                }
+            self._save_Rabi_length_data(
+                time=time,
+                data=data,
+                is_normalize=is_normalize,
+                is_fit=is_fit,
+                fit_result_dict=fit_result_dict,
+            )
+
         self.save_results(experiment_name="Rabi_length")
         plt.show()
+
+        return popt, pcov
+
+    def _save_Rabi_length_data(self, time, data, is_normalize, is_fit, fit_result_dict):
+        from datetime import datetime
+
+        now = datetime.now()
+        run_date = now.strftime("%Y%m%d")
+        run_timestamp = now.strftime("%H%M%S")
+
+        save_dir = Path(f"Results/{run_date}/Rabi_length_raw_data")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        save_parameters = {
+            "which_data": self.which_data,
+            "is_single_shot": self.is_single_shot,
+            "is_normalize": is_normalize,
+            "is_fit": is_fit,
+            "exp_Rabi_length_dict": self.exp_Rabi_length_dict,
+        }
+
+        np.savez(
+            save_dir / f"{run_timestamp}_Rabi_length_data.npz",
+            rabi_length_raw_data=self.rabi_length_data,
+            time=time,
+            plotted_data=data,
+            save_parameters=save_parameters,
+            fit_result_dict=fit_result_dict,
+        )
 
 
     def Rabi_length_spin_locking(self, average_exponent = 12, duration = 100e-6, start_time = 0e-6,
@@ -2614,7 +2674,7 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
         readout_pulse, readout_weighting_function = self.pulse_generator("readout", qubits_parameters, cavity_parameters, 
                         qubits_component, cavity_component)
         
-        _, _, sidebands_pulse, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
+        _, _, sidebands_pulse, _, _, _, _ = self.pulse_generator("cavity_control", qubits_parameters, cavity_parameters,
                                                                    qubits_component, cavity_component)
         
         rabi_drive_chunk, rabi_drive, rabi_ramp_up, rabi_ramp_down = self.pulse_generator("rabi", qubits_parameters, cavity_parameters,
@@ -2622,27 +2682,6 @@ class Basic_qubit_characterization_experiments(ZI_QCCS):
 
         
         rabi_length_sweep = LinearSweepParameter(uid="pulses", start=0, stop=npts-1, count=npts)
-
-        
-        # def repeat(count: int | SweepParameter | LinearSweepParameter, exp):
-        #     def decorator(f):
-        #         if isinstance(count, (LinearSweepParameter, SweepParameter)):
-        #             with exp.match(sweep_parameter=count):
-        #                 for v in count.values:
-        #                     with exp.case(v):
-        #                         if v == 0:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #                         else:
-        #                             exp.play(signal="drive", pulse=ramp_up)
-        #                             for _ in range(int(v)):
-        #                                 f()
-        #                             exp.play(signal="drive", pulse=ramp_down)
-        #         else:
-        #             for _ in range(count):
-        #                 f()
-
-        #     return decorator
         
         def _xyz(sweep_case: int | SweepParameter | LinearSweepParameter, exp):
             def decorator(f):
